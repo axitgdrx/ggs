@@ -853,7 +853,7 @@ function createGameCard(game) {
         async function fetchData() {
             try {
                 // 根据当前 sport 选择不同接口
-                let url = '/api/odds/multi';
+                let url = '/api/odds/all-sports';
                 if (currentSport === 'nba') {
                     url = '/api/odds/nba';
                 } else if (currentSport === 'nfl') {

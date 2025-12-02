@@ -486,8 +486,8 @@ def fetch_all_sports_data(force_refresh=False):
         },
         'matched_games': matched_games,
         'arb_opportunities': arb_opportunities,
-        'unmatched_polymarket': [g for g in poly_games if not any(g['away_code'] == m['polymarket']['away_code'] and g['home_code'] == m['polymarket']['home_code'] for m in matched_games)][:50],  # Limit for performance
-        'unmatched_kalshi': [g for g in kalshi_games if not any(g['away_code'] == m['kalshi']['away_code'] and g['home_code'] == m['kalshi']['home_code'] for m in matched_games)][:50]
+        'unmatched_polymarket': [g for g in poly_games if not any(g['away_code'] == m['polymarket']['away_code'] and g['home_code'] == m['polymarket']['home_code'] for m in matched_games)],
+        'unmatched_kalshi': [g for g in kalshi_games if not any(g['away_code'] == m['kalshi']['away_code'] and g['home_code'] == m['kalshi']['home_code'] for m in matched_games)]
     }
     
     # Cache the result
@@ -798,6 +798,42 @@ def get_all_sports_odds():
     """Get comprehensive odds data from all sports categories"""
     try:
         data = fetch_all_sports_data()
+        
+        # Transform matched_games to the format expected by the frontend
+        all_games = []
+        for match in data.get('matched_games', []):
+            poly = match['polymarket']
+            kalshi = match['kalshi']
+            
+            game = {
+                'away_team': poly['away_team'],
+                'home_team': poly['home_team'],
+                'away_code': poly['away_code'],
+                'home_code': poly['home_code'],
+                'sport': poly.get('sport', 'unknown'),
+                'polymarket': {
+                    'away': poly['away_prob'],
+                    'home': poly['home_prob'],
+                    'raw_away': poly['away_raw_price'],
+                    'raw_home': poly['home_raw_price'],
+                    'market_id': poly['market_id'],
+                    'url': poly['url']
+                },
+                'kalshi': {
+                    'away': kalshi['away_prob'],
+                    'home': kalshi['home_prob'],
+                    'raw_away': kalshi['away_raw_price'],
+                    'raw_home': kalshi['home_raw_price'],
+                    'away_ticker': kalshi.get('ticker'),
+                    'home_ticker': kalshi.get('ticker'),
+                    'url': kalshi['url']
+                }
+            }
+            all_games.append(game)
+        
+        # Add the transformed games list to the response
+        data['games'] = all_games
+        
         return jsonify(data)
     except Exception as e:
         now = datetime.now()
@@ -813,6 +849,41 @@ def refresh_all_sports_odds():
     """Force refresh all sports data"""
     try:
         data = fetch_all_sports_data(force_refresh=True)
+        
+        # Transform matched_games to the format expected by the frontend
+        all_games = []
+        for match in data.get('matched_games', []):
+            poly = match['polymarket']
+            kalshi = match['kalshi']
+            
+            game = {
+                'away_team': poly['away_team'],
+                'home_team': poly['home_team'],
+                'away_code': poly['away_code'],
+                'home_code': poly['home_code'],
+                'sport': poly.get('sport', 'unknown'),
+                'polymarket': {
+                    'away': poly['away_prob'],
+                    'home': poly['home_prob'],
+                    'raw_away': poly['away_raw_price'],
+                    'raw_home': poly['home_raw_price'],
+                    'market_id': poly['market_id'],
+                    'url': poly['url']
+                },
+                'kalshi': {
+                    'away': kalshi['away_prob'],
+                    'home': kalshi['home_prob'],
+                    'raw_away': kalshi['away_raw_price'],
+                    'raw_home': kalshi['home_raw_price'],
+                    'away_ticker': kalshi.get('ticker'),
+                    'home_ticker': kalshi.get('ticker'),
+                    'url': kalshi['url']
+                }
+            }
+            all_games.append(game)
+        
+        data['games'] = all_games
+        
         return jsonify({
             'success': True,
             'message': 'Data refreshed successfully',
