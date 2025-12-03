@@ -104,6 +104,11 @@ class PaperTradingSystem:
         if risk_detail and any(risk_detail.get(k) is None for k in required_keys):
             risk_detail = None
         
+        # Requirement 2: Prohibit betting when price is 0¢
+        if risk_detail:
+            if risk_detail.get('bestAwayPrice', 0) <= 0 or risk_detail.get('bestHomePrice', 0) <= 0:
+                return False, "Invalid odds (zero price detected in pre-calculated arb)"
+        
         if risk_detail and risk_detail.get('edge') and risk_detail.get('edge') > 0:
             poly = game.get('polymarket', {})
             kalshi = game.get('kalshi', {})
@@ -135,7 +140,7 @@ class PaperTradingSystem:
             game_id = f"{game.get('away_code')}@{game.get('home_code')}"
             for bet in self.data['bets']:
                 if bet['id'] == game_id and bet['status'] in ['pending', 'locked']:
-                    return False, "Market already traded"
+                    return False, "Market already traded (duplicate trade prevention)"
             
             POLY_FEE = 0.02
             KALSHI_FEE = 0.07
@@ -350,13 +355,13 @@ class PaperTradingSystem:
             return False, f"ROI ({roi_percent:.2f}%) below threshold ({roi_threshold}%)"
 
         if total_cost_usd > self.data['balance']:
-             return False, "Insufficient balance"
-             
-        # Check duplicate
+            return False, "Insufficient balance"
+
+        # Requirement 1: Enhanced duplicate check - reject duplicate trades
         game_id = f"{game['away_code']}@{game['home_code']}"
         for bet in self.data['bets']:
             if bet['id'] == game_id and bet['status'] in ['pending', 'locked']:
-                return False, "Market already traded"
+                return False, "Market already traded (duplicate trade prevention)"
 
         # Enrich legs with detailed cost info
         for leg in [best_away, best_home]:
