@@ -70,6 +70,31 @@
             font-weight: 500;
         }
         .nav-link:hover { text-decoration: underline; }
+        
+        .vertical-game {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 2px;
+            line-height: 1.4;
+            text-align: center;
+        }
+        .vertical-game .team { font-weight: 600; }
+        .vertical-game .separator { font-size: 11px; color: #888; letter-spacing: 1px; }
+        
+        .time-cell {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .time-cell > div:first-child { font-weight: 500; }
+        .time-sub { 
+            font-size: 11px; 
+            color: #999; 
+            padding-top: 4px; 
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .muted { color: #666; font-size: 11px; }
     </style>
 </head>
 <body>
@@ -153,6 +178,27 @@
                     const row = document.createElement('tr');
                     const date = new Date(bet.timestamp).toLocaleString('zh-CN');
                     
+                    // Format game name vertically (Team A / vs / Team B)
+                    let gameDisplay = bet.game;
+                    const vsMatch = bet.game.match(/(.+?)\s+(vs|@)\s+(.+)/i);
+                    if (vsMatch) {
+                        const teamA = vsMatch[1].trim();
+                        const separator = vsMatch[2].trim();
+                        const teamB = vsMatch[3].trim();
+                        gameDisplay = `<div class="vertical-game">
+                            <div class="team">${teamA}</div>
+                            <div class="separator">${separator}</div>
+                            <div class="team">${teamB}</div>
+                        </div>`;
+                    }
+                    
+                    // Format game time (show real game start/end time)
+                    let gameTimeDisplay = '';
+                    if (bet.game_time) {
+                        const gameTime = bet.game_time.replace('T', ' ').substring(0, 16);
+                        gameTimeDisplay = `<div class="time-sub">真实开赛/完赛时间：${gameTime}</div>`;
+                    }
+                    
                     // Format legs
                     let legsHtml = '';
                     if (bet.legs && bet.legs.length > 0) {
@@ -182,8 +228,11 @@
                     }
 
                     row.innerHTML = `
-                        <td>${date}</td>
-                        <td>${bet.game}</td>
+                        <td class="time-cell">
+                            <div>${date}</div>
+                            ${gameTimeDisplay}
+                        </td>
+                        <td>${gameDisplay}</td>
                         <td><span class="badge" style="background:rgba(255,255,255,0.1)">${bet.sport}</span></td>
                         <td>Risk-Free Arb</td>
                         <td>${legsHtml}</td>
