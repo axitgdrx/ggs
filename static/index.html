@@ -694,18 +694,18 @@ function createGameCard(game) {
 
             const sportTag = game.sport ? `<span class="sport-chip ${game.sport.toLowerCase()}">${game.sport}</span>` : '';
 
-            // Calculate differences from Polymarketrket
+            // Calculate differences from Polymarket
             const polyAway = game.polymarket.away;
             const polyHome = game.polymarket.home;
-            const kalshiAway = game.kalshi.away;
-            const kalshiHome = game.kalshi.home;
+            const kalshiAway = game.kalshi ? game.kalshi.away : 0;
+            const kalshiHome = game.kalshi ? game.kalshi.home : 0;
 
-            const kalshiDiffAway = Math.abs(polyAway - kalshiAway);
-            const kalshiDiffHome = Math.abs(polyHome - kalshiHome);
+            const kalshiDiffAway = game.kalshi ? Math.abs(polyAway - kalshiAway) : 0;
+            const kalshiDiffHome = game.kalshi ? Math.abs(polyHome - kalshiHome) : 0;
 
             // Determine best odds for each team
-            const awayBest = polyAway > kalshiAway ? 'poly' : 'kalshi';
-            const homeBest = polyHome > kalshiHome ? 'poly' : 'kalshi';
+            const awayBest = game.kalshi && (polyAway > kalshiAway) ? 'poly' : 'kalshi';
+            const homeBest = game.kalshi && (polyHome > kalshiHome) ? 'poly' : 'kalshi';
 
             // Investment Calculation
             const investInput = document.getElementById('investment-input');
@@ -784,12 +784,12 @@ function createGameCard(game) {
                                 <div class="odds-value">${polyAway}%</div>
                             </div>
                             <div class="comparison-cell platform-cell platform-kalshi ${awayBest === 'kalshi' ? 'best-odds' : ''}"
-                                 onclick="window.open('${game.kalshi.url}', '_blank')">
+                                 ${game.kalshi && game.kalshi.url ? `onclick="window.open('${game.kalshi.url}', '_blank')"` : ''}>
                                 <div class="platform-name">Kalshi</div>
-                                <div class="odds-value">${kalshiAway}%</div>
-                                <div class="diff-badge ${getDiffClass(kalshiDiffAway)}">
+                                <div class="odds-value">${game.kalshi ? kalshiAway + '%' : '暂无数据'}</div>
+                                ${game.kalshi ? `<div class="diff-badge ${getDiffClass(kalshiDiffAway)}">
                                     Δ ${kalshiDiffAway.toFixed(1)}%
-                                </div>
+                                </div>` : ''}
                             </div>
                             <div class="comparison-cell platform-cell platform-odds" ${game.odds_api && game.odds_api.url ? `onclick="window.open('${game.odds_api.url}', '_blank')"` : ''}>
                                 ${game.odds_api && game.odds_api.away ?
@@ -820,12 +820,12 @@ function createGameCard(game) {
                                 <div class="odds-value">${polyHome}%</div>
                             </div>
                             <div class="comparison-cell platform-cell platform-kalshi ${homeBest === 'kalshi' ? 'best-odds' : ''}"
-                                 onclick="window.open('${game.kalshi.url}', '_blank')">
+                                 ${game.kalshi && game.kalshi.url ? `onclick="window.open('${game.kalshi.url}', '_blank')"` : ''}>
                                 <div class="platform-name">Kalshi</div>
-                                <div class="odds-value">${kalshiHome}%</div>
-                                <div class="diff-badge ${getDiffClass(kalshiDiffHome)}">
+                                <div class="odds-value">${game.kalshi ? kalshiHome + '%' : '暂无数据'}</div>
+                                ${game.kalshi ? `<div class="diff-badge ${getDiffClass(kalshiDiffHome)}">
                                     Δ ${kalshiDiffHome.toFixed(1)}%
-                                </div>
+                                </div>` : ''}
                             </div>
                             <div class="comparison-cell platform-cell platform-odds" ${game.odds_api && game.odds_api.url ? `onclick="window.open('${game.odds_api.url}', '_blank')"` : ''}>
                                 ${game.odds_api && game.odds_api.home ?
@@ -852,8 +852,8 @@ function createGameCard(game) {
 
         async function fetchData() {
             try {
-                // 根据当前 sport 选择不同接口
-                let url = '/api/odds/multi';
+                // 使用纸面交易系统的数据源，确保数据一致性
+                let url = '/api/odds/all-sports';
                 if (currentSport === 'nba') {
                     url = '/api/odds/nba';
                 } else if (currentSport === 'nfl') {
@@ -874,49 +874,56 @@ function createGameCard(game) {
                     return;
                 }
 
-                // 更新通用统计
-                if (data.stats) {
-                    if (document.getElementById('total-games')) {
-                        document.getElementById('total-games').textContent = data.stats.total_games;
-                    }
-                    if (document.getElementById('poly-count')) {
-                        document.getElementById('poly-count').textContent = data.stats.poly_total;
-                    }
-                    if (document.getElementById('kalshi-count')) {
-                        document.getElementById('kalshi-count').textContent = data.stats.kalshi_total;
+                let allGames = [];
+                let stats = {};
+
+                if (url === '/api/odds/all-sports') {
+                    // 使用后端提供的homepage格式数据
+                    allGames = data.homepage_games || [];
+                    stats = {
+                        total_games: allGames.length,
+                        poly_total: data.stats.total_polymarket_games,
+                        kalshi_total: data.stats.total_kalshi_games,
+                        matched: data.stats.matched_games
+                    };
+                } else {
+                    // 单个体育项目的数据保持原有逻辑
+                    stats = data.stats || {};
+                    
+                    if (currentSport === 'nba') {
+                        // NBA 返回的是 today / tomorrow 两天
+                        const todayGames = (data.games && data.games.today) || [];
+                        const tomorrowGames = (data.games && data.games.tomorrow) || [];
+                        allGames = [...todayGames, ...tomorrowGames];
+                    } else {
+                        // 其他体育项目返回的是一个 games 列表
+                        allGames = data.games || [];
                     }
                 }
 
-                let allGames = [];
-
-                if (currentSport === 'nba') {
-                    // NBA 返回的是 today / tomorrow 两天
-                    const todayGames = (data.games && data.games.today) || [];
-                    const tomorrowGames = (data.games && data.games.tomorrow) || [];
-                    allGames = [...todayGames, ...tomorrowGames];
-
-                    if (data.stats) {
-                        if (document.getElementById('today-count') && data.stats.today_games !== undefined) {
-                            document.getElementById('today-count').textContent = data.stats.today_games;
-                        }
-                        if (document.getElementById('tomorrow-count') && data.stats.tomorrow_games !== undefined) {
-                            document.getElementById('tomorrow-count').textContent = data.stats.tomorrow_games;
-                        }
+                // 更新通用统计
+                if (stats) {
+                    if (document.getElementById('total-games')) {
+                        document.getElementById('total-games').textContent = stats.total_games;
                     }
-                } else if (currentSport === 'multi') {
-                    // 综合视图直接返回所有比赛
-                    allGames = data.games || [];
-
-                    if (document.getElementById('today-count')) {
-                        document.getElementById('today-count').textContent = '-';
+                    if (document.getElementById('poly-count')) {
+                        document.getElementById('poly-count').textContent = stats.poly_total;
                     }
-                    if (document.getElementById('tomorrow-count')) {
-                        document.getElementById('tomorrow-count').textContent = '-';
+                    if (document.getElementById('kalshi-count')) {
+                        document.getElementById('kalshi-count').textContent = stats.kalshi_total;
+                    }
+                }
+
+                // 更新NBA特定统计
+                if (currentSport === 'nba' && data.stats) {
+                    if (document.getElementById('today-count') && data.stats.today_games !== undefined) {
+                        document.getElementById('today-count').textContent = data.stats.today_games;
+                    }
+                    if (document.getElementById('tomorrow-count') && data.stats.tomorrow_games !== undefined) {
+                        document.getElementById('tomorrow-count').textContent = data.stats.tomorrow_games;
                     }
                 } else {
-                    // 其他体育项目返回的是一个 games 列表
-                    allGames = data.games || [];
-
+                    // 非NBA项目显示'-'
                     if (document.getElementById('today-count')) {
                         document.getElementById('today-count').textContent = '-';
                     }
