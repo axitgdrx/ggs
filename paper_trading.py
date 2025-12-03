@@ -234,11 +234,26 @@ class PaperTradingSystem:
         if not game.get('away_code') or not game.get('home_code'):
              return False, "Missing team codes"
 
-        # Calculate effective costs including fees and slippage
+        # Check for valid prices (must be > 0)
+        if poly_away <= 0 or poly_home <= 0 or kalshi_away <= 0 or kalshi_home <= 0:
+            return False, "Invalid odds (zero price)"
+
+        # Binary Arbitrage Logic - evaluate cross-market strategies
+        # Calculate effective costs including fees and slippage for all positions
         poly_away_eff = poly_away * (1 + POLY_FEE + SLIPPAGE_ESTIMATE)
+        poly_home_eff = poly_home * (1 + POLY_FEE + SLIPPAGE_ESTIMATE)
         kalshi_away_eff = kalshi_away * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
+        kalshi_home_eff = kalshi_home * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
         
-        if poly_away_eff < kalshi_away_eff:
+        # Strategy 1: Polymarket Away + Kalshi Home (cross-market hedge)
+        strategy1_cost = poly_away_eff + kalshi_home_eff
+        
+        # Strategy 2: Kalshi Away + Polymarket Home (cross-market hedge)
+        strategy2_cost = kalshi_away_eff + poly_home_eff
+        
+        # Pick the strategy with LOWEST total cost (best arbitrage opportunity)
+        if strategy1_cost <= strategy2_cost:
+            # Use Strategy 1
             best_away = {
                 'platform': 'Polymarket', 
                 'price': poly_away, 
@@ -249,34 +264,6 @@ class PaperTradingSystem:
                 'url': poly.get('url', ''),
                 'fee_rate': POLY_FEE
             }
-        else:
-            best_away = {
-                'platform': 'Kalshi', 
-                'price': kalshi_away, 
-                'eff': kalshi_away_eff, 
-                'team': game.get('away_team', 'Away'),
-                'code': game.get('away_code'),
-                'market_id': kalshi.get('away_ticker'),
-                'url': kalshi.get('url', ''),
-                'fee_rate': KALSHI_FEE
-            }
-            
-        # Determine best price for Home
-        poly_home_eff = poly_home * (1 + POLY_FEE + SLIPPAGE_ESTIMATE)
-        kalshi_home_eff = kalshi_home * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
-        
-        if poly_home_eff < kalshi_home_eff:
-            best_home = {
-                'platform': 'Polymarket', 
-                'price': poly_home, 
-                'eff': poly_home_eff, 
-                'team': game.get('home_team', 'Home'),
-                'code': game.get('home_code'),
-                'market_id': poly.get('home_market_id') or poly.get('market_id'),
-                'url': poly.get('url', ''),
-                'fee_rate': POLY_FEE
-            }
-        else:
             best_home = {
                 'platform': 'Kalshi', 
                 'price': kalshi_home, 
@@ -287,24 +274,34 @@ class PaperTradingSystem:
                 'url': kalshi.get('url', ''),
                 'fee_rate': KALSHI_FEE
             }
-            
-        # Check for valid prices (must be > 0)
-        if best_away['price'] <= 0 or best_home['price'] <= 0:
-            return False, "Invalid odds (zero price)"
-
-        total_cost_per_unit = best_away['eff'] + best_home['eff']
+            total_cost_per_unit = strategy1_cost
+        else:
+            # Use Strategy 2
+            best_away = {
+                'platform': 'Kalshi', 
+                'price': kalshi_away, 
+                'eff': kalshi_away_eff, 
+                'team': game.get('away_team', 'Away'),
+                'code': game.get('away_code'),
+                'market_id': kalshi.get('away_ticker'),
+                'url': kalshi.get('url', ''),
+                'fee_rate': KALSHI_FEE
+            }
+            best_home = {
+                'platform': 'Polymarket', 
+                'price': poly_home, 
+                'eff': poly_home_eff, 
+                'team': game.get('home_team', 'Home'),
+                'code': game.get('home_code'),
+                'market_id': poly.get('home_market_id') or poly.get('market_id'),
+                'url': poly.get('url', ''),
+                'fee_rate': POLY_FEE
+            }
+            total_cost_per_unit = strategy2_cost
         
-        # Enhanced arbitrage detection - 更宽松的条件以捕获更多机会
-        # 1. Perfect arbitrage (cost < 100)
-        # 2. Near arbitrage (cost between 100-105, 放宽到105)
-        # 3. Partial arbitrage (significant price difference > 3%, 放宽到3%)
-        
-        is_perfect_arb = total_cost_per_unit < 100
-        is_near_arb = 100 <= total_cost_per_unit <= 105  # 从102放宽到105
-        is_partial_arb = abs(best_away['price'] - kalshi_away) > 3 or abs(best_home['price'] - kalshi_home) > 3  # 从5%放宽到3%
-        
-        if not (is_perfect_arb or is_near_arb or is_partial_arb):
-            return False, "No profitable arb opportunity"
+        # Strict binary surebet requirement: total cost must be < 100¢
+        if total_cost_per_unit >= 100:
+            return False, "No risk-free arb opportunity (total cost ≥ 100¢)"
             
         # Get bet size from env (Target Payout Quantity)
         try:
@@ -312,16 +309,7 @@ class PaperTradingSystem:
         except:
             target_units = 100.0
 
-        # Dynamic sizing based on arbitrage quality
-        if is_perfect_arb:
-            units = target_units
-            arb_type = "perfect"
-        elif is_near_arb:
-            units = target_units * 0.5  # Smaller size for near arbs
-            arb_type = "near"
-        else:
-            units = target_units * 0.3  # Even smaller for partial arbs
-            arb_type = "partial"
+        units = target_units
 
         # Apply liquidity discount for larger trades
         if units > 200:
@@ -344,13 +332,7 @@ class PaperTradingSystem:
         except:
             min_roi = 0.0
             
-        # Different ROI thresholds for different arb types - 使用环境变量
-        if arb_type == "perfect":
-            roi_threshold = max(min_roi, -10.0)  # 允许负ROI
-        elif arb_type == "near":
-            roi_threshold = max(min_roi, -10.0)  # 允许负ROI
-        else:
-            roi_threshold = max(min_roi, -10.0)  # 允许负ROI
+        roi_threshold = max(min_roi, 0.0)
             
         if roi_percent <= roi_threshold:
             return False, f"ROI ({roi_percent:.2f}%) below threshold ({roi_threshold}%)"
@@ -391,9 +373,12 @@ class PaperTradingSystem:
             'realized_profit': 0.0,
             'fees_total_usd': best_away['fee_usd'] + best_home['fee_usd'],
             'slippage_total_usd': best_away['slippage_usd'] + best_home['slippage_usd'],
-            'arb_type': arb_type,
+            'arb_type': 'binary_cross_market',
             'total_cost_per_unit': total_cost_per_unit,
-            'bet_amount_config': target_units
+            'bet_amount_config': target_units,
+            'strategy_1_cost': strategy1_cost,
+            'strategy_2_cost': strategy2_cost,
+            'selected_strategy': 1 if strategy1_cost <= strategy2_cost else 2
         }
         
         self.data['bets'].append(trade)

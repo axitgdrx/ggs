@@ -127,24 +127,16 @@ def _extract_price_value(game, side):
     return None
 
 
-def _pick_best_leg(poly_price, kalshi_price):
-    poly_eff = poly_price * (1 + POLYMARKET_FEE + SLIPPAGE_ESTIMATE)
-    kalshi_eff = kalshi_price * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
-    if poly_eff <= kalshi_eff:
-        return {
-            'platform': 'Polymarket',
-            'price': poly_price,
-            'effective': poly_eff
-        }
-    return {
-        'platform': 'Kalshi',
-        'price': kalshi_price,
-        'effective': kalshi_eff
-    }
-
-
 def _calculate_risk_free_details(poly_game, kalshi_game):
-    """Return arbitrage metrics with identical math to paper trading."""
+    """
+    Return arbitrage metrics using strict Binary Options / Surebet logic.
+    
+    For binary outcomes (Team A wins OR Team B wins), we evaluate two cross-market strategies:
+    Strategy 1: Buy "A wins" from Polymarket + Buy "B wins" from Kalshi
+    Strategy 2: Buy "A wins" from Kalshi + Buy "B wins" from Polymarket
+    
+    We pick the strategy with the LOWEST total cost to ensure true risk-free arbitrage.
+    """
     poly_away = _extract_price_value(poly_game, 'away')
     poly_home = _extract_price_value(poly_game, 'home')
     kalshi_away = _extract_price_value(kalshi_game, 'away')
@@ -153,24 +145,62 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
     if None in [poly_away, poly_home, kalshi_away, kalshi_home]:
         return None
     
-    # Requirement 2: Reject zero prices
+    # Reject zero prices - cannot have valid arbitrage with zero prices
     if poly_away <= 0 or poly_home <= 0 or kalshi_away <= 0 or kalshi_home <= 0:
         return None
 
-    away_leg = _pick_best_leg(poly_away, kalshi_away)
-    home_leg = _pick_best_leg(poly_home, kalshi_home)
+    # Calculate effective costs including fees and slippage for all four positions
+    poly_away_eff = poly_away * (1 + POLYMARKET_FEE + SLIPPAGE_ESTIMATE)
+    poly_home_eff = poly_home * (1 + POLYMARKET_FEE + SLIPPAGE_ESTIMATE)
+    kalshi_away_eff = kalshi_away * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
+    kalshi_home_eff = kalshi_home * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE)
 
-    gross_cost = away_leg['price'] + home_leg['price']
-    gross_edge = 100 - gross_cost
+    # Strategy 1: Polymarket Away + Kalshi Home (cross-market hedge)
+    strategy1_cost = poly_away_eff + kalshi_home_eff
+    strategy1_gross = poly_away + kalshi_home
+    
+    # Strategy 2: Kalshi Away + Polymarket Home (cross-market hedge)
+    strategy2_cost = kalshi_away_eff + poly_home_eff
+    strategy2_gross = kalshi_away + poly_home
 
-    total_cost = away_leg['effective'] + home_leg['effective']
+    # Pick the strategy with LOWEST total cost (best arbitrage opportunity)
+    if strategy1_cost <= strategy2_cost:
+        # Use Strategy 1
+        away_leg = {
+            'platform': 'Polymarket',
+            'price': poly_away,
+            'effective': poly_away_eff
+        }
+        home_leg = {
+            'platform': 'Kalshi',
+            'price': kalshi_home,
+            'effective': kalshi_home_eff
+        }
+        total_cost = strategy1_cost
+        gross_cost = strategy1_gross
+    else:
+        # Use Strategy 2
+        away_leg = {
+            'platform': 'Kalshi',
+            'price': kalshi_away,
+            'effective': kalshi_away_eff
+        }
+        home_leg = {
+            'platform': 'Polymarket',
+            'price': poly_home,
+            'effective': poly_home_eff
+        }
+        total_cost = strategy2_cost
+        gross_cost = strategy2_gross
+
     if total_cost <= 0:
         return None
 
+    gross_edge = 100 - gross_cost
     net_edge = 100 - total_cost
     roi = net_edge / total_cost
     
-    # Requirement 4: More realistic arbitrage - only keep opportunities with positive ROI
+    # Only keep opportunities with positive ROI (true risk-free arbitrage)
     if roi <= 0:
         return None
 
@@ -186,6 +216,7 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
         'total_cost': round(total_cost, 4),
         'net_edge': round(net_edge, 4),
         'roi_percent': round(roi * 100, 4),
+        'arbitrage_type': 'binary_cross_market',
         'fees': {
             'polymarket': POLYMARKET_FEE,
             'kalshi': KALSHI_FEE,
