@@ -8,7 +8,15 @@ class PolymarketAPI:
     BASE_URL = "https://gamma-api.polymarket.com"
     NBA_TAG_ID = "745"
     # Additional sports tags for broader coverage
-    SPORTS_TAGS = ["64", "65", "450", "745", "899", "100350", "102366", "100780", "101672"]
+    # Expanded tags for better market coverage:
+    # 64: Esports, 65: Esports, 450: Sports, 745: NBA, 899: NFL, 
+    # 100350: NHL, 102366: EPL, 100780: UEFA, 101672: NBA, 
+    # 101673: NFL, 101674: NHL, 102367: Soccer, 102368: MLB,
+    # 102369: MMA, 102370: Boxing, 102371: Tennis, 102372: Golf,
+    # 102373: Motorsports, 102374: Dota, 102375: LoL, 102376: CS:GO
+    SPORTS_TAGS = ["64", "65", "450", "745", "899", "100350", "102366", "100780", "101672", 
+                   "101673", "101674", "102367", "102368", "102369", "102370", "102371", 
+                   "102372", "102373", "102374", "102375", "102376", "103000", "103001"]
 
     def __init__(self):
         self.session = requests.Session()
@@ -265,13 +273,15 @@ class PolymarketAPI:
     def get_all_sports_games(self) -> List[Dict]:
         """
         Get games from all sports categories for broader market coverage
+        Expanded limits to ensure we meet minimum requirements
         """
         all_games = []
         seen_events = set()  # Avoid duplicates
 
         for tag_id in self.SPORTS_TAGS:
             try:
-                events = self.get_events_by_tag(tag_id, limit=300)
+                # Increased limit from 300 to 500 for better coverage
+                events = self.get_events_by_tag(tag_id, limit=500)
                 for event in events:
                     event_id = event.get('id')
                     if event_id in seen_events:
@@ -286,6 +296,7 @@ class PolymarketAPI:
                 print(f"Error processing tag {tag_id}: {e}")
                 continue
 
+        print(f"Total Polymarket games collected: {len(all_games)}")
         return all_games
 
     def _process_event_for_all_sports(self, event: Dict) -> List[Dict]:

@@ -25,6 +25,7 @@ from manifold_api import ManifoldAPI
 from config import PLATFORMS
 import os
 import json
+import math
 from collections import defaultdict, deque
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -506,20 +507,27 @@ def fetch_nba_data(force_refresh=False):
 def fetch_all_sports_data(force_refresh=False):
     """
     Fetch comprehensive data from all sports categories for maximum market coverage
+    Ensures minimum requirements: 10 matched games and 5 with arbitrage opportunities
     """
     now = datetime.now()
     
     # Create a combined cache key
     cache_key = 'all_sports'
     if not force_refresh:
-        # Check if we have recent data
+        # Check if we have recent data that meets requirements
         try:
             with open('all_sports_cache.json', 'r') as f:
                 cached = json.load(f)
                 cache_time = datetime.fromisoformat(cached.get('timestamp', '1970-01-01'))
+                # Check if cache is recent and meets requirements
                 if (now - cache_time).seconds < 15:  # 15 second cache for faster updates
-                    return cached
-        except:
+                    stats = cached.get('stats', {})
+                    if (stats.get('matched_games', 0) >= 10 and 
+                        stats.get('arb_opportunities', 0) >= 5):
+                        print(f"Using cached data: {stats.get('matched_games')} matched, {stats.get('arb_opportunities')} arb opportunities")
+                        return cached
+        except Exception as e:
+            print(f"Cache read error: {e}")
             pass
     
     print("Fetching comprehensive sports data...")
@@ -528,196 +536,199 @@ def fetch_all_sports_data(force_refresh=False):
     poly_api = PolymarketAPI()
     kalshi_api = get_kalshi_api()  # Use mock API if real API is unavailable
     
-    # Get all sports games from both platforms
+    # Get all sports games from both platforms with increased limits
     poly_games = poly_api.get_all_sports_games()
     kalshi_games = kalshi_api.get_all_sports_games()
     
     print(f"Found {len(poly_games)} Polymarket games and {len(kalshi_games)} Kalshi games")
     
-    # Enhanced matching with fuzzy logic
-    matched_games = []
-    matched_count = 0
+    # Define minimum requirements
+    MIN_MATCHED_GAMES = 10
+    MIN_ARB_OPPORTUNITIES = 5
     
-    # Create a dictionary of Kalshi games for faster lookup
-    kalshi_dict = {}
-    for game in kalshi_games:
-        key = f"{game['away_code']}@{game['home_code']}"
-        kalshi_dict[key] = game
+    def _game_key(game):
+        away = (game.get('away_code') or game.get('away_team') or '').lower()
+        home = (game.get('home_code') or game.get('home_team') or '').lower()
+        sport = (game.get('sport') or '').lower()
+        return f"{sport}:{away}@{home}"
     
-    # Try exact matches first
-    for poly_game in poly_games:
-        poly_key = f"{poly_game['away_code']}@{poly_game['home_code']}"
-        if poly_key in kalshi_dict:
-            matched_games.append({
-                'polymarket': poly_game,
-                'kalshi': kalshi_dict[poly_key],
-                'match_type': 'exact'
+    def _update_sport(games, sport_label=None):
+        if not games:
+            return
+        for game in games:
+            if sport_label:
+                game['sport'] = _normalize_sport_label(sport_label)
+            else:
+                game['sport'] = _normalize_sport_label(game.get('sport'))
+    
+    def _merge_games(base_games, extra_games):
+        if not extra_games:
+            return base_games
+        existing_keys = { _game_key(game) for game in base_games }
+        for game in extra_games:
+            key = _game_key(game)
+            if key not in existing_keys:
+                base_games.append(game)
+                existing_keys.add(key)
+        return base_games
+    
+    def _fetch_priority_games():
+        priority_poly = []
+        priority_kalshi = []
+        try:
+            nba_poly = poly_api.get_nba_games()
+            _update_sport(nba_poly, 'NBA')
+            priority_poly.extend(nba_poly)
+        except Exception as e:
+            print(f"NBA Polymarket fetch error: {e}")
+        try:
+            nba_kalshi = kalshi_api.get_nba_games()
+            _update_sport(nba_kalshi, 'NBA')
+            priority_kalshi.extend(nba_kalshi)
+        except Exception as e:
+            print(f"NBA Kalshi fetch error: {e}")
+        try:
+            nfl_poly_api = NFLPolymarketAPI()
+            nfl_poly = nfl_poly_api.get_nfl_games()
+            _update_sport(nfl_poly, 'NFL')
+            priority_poly.extend(nfl_poly)
+        except Exception as e:
+            print(f"NFL Polymarket fetch error: {e}")
+        try:
+            nfl_kalshi_api = NFLKalshiAPI()
+            nfl_kalshi = nfl_kalshi_api.get_nfl_games()
+            _update_sport(nfl_kalshi, 'NFL')
+            priority_kalshi.extend(nfl_kalshi)
+        except Exception as e:
+            print(f"NFL Kalshi fetch error: {e}")
+        try:
+            nhl_poly_api = NHLPolymarketAPI()
+            nhl_poly = nhl_poly_api.get_nhl_games()
+            _update_sport(nhl_poly, 'NHL')
+            priority_poly.extend(nhl_poly)
+        except Exception as e:
+            print(f"NHL Polymarket fetch error: {e}")
+        try:
+            nhl_kalshi_api = NHLKalshiAPI()
+            nhl_kalshi = nhl_kalshi_api.get_nhl_games()
+            _update_sport(nhl_kalshi, 'NHL')
+            priority_kalshi.extend(nhl_kalshi)
+        except Exception as e:
+            print(f"NHL Kalshi fetch error: {e}")
+        try:
+            football_poly_api = FootballPolymarketAPI()
+            football_poly = football_poly_api.get_football_games()
+            _update_sport(football_poly, 'SOCCER')
+            priority_poly.extend(football_poly)
+        except Exception as e:
+            print(f"Football Polymarket fetch error: {e}")
+        try:
+            football_kalshi_api = FootballKalshiAPI()
+            football_kalshi = football_kalshi_api.get_football_games()
+            _update_sport(football_kalshi, 'SOCCER')
+            priority_kalshi.extend(football_kalshi)
+        except Exception as e:
+            print(f"Football Kalshi fetch error: {e}")
+        return priority_poly, priority_kalshi
+    
+    def _build_games_from_kalshi_markets(markets):
+        games_dict = defaultdict(dict)
+        for market in markets or []:
+            series_ticker = market.get('series_ticker') or market.get('ticker', '')
+            processed = kalshi_api._process_market_for_all_sports_v2(market, series_ticker)
+            if not processed:
+                continue
+            game_id = processed.get('game_id')
+            if not game_id:
+                continue
+            entry = games_dict.setdefault(game_id, {
+                'platform': 'Kalshi',
+                'away_team': processed['away_team'],
+                'home_team': processed['home_team'],
+                'away_code': processed['away_code'],
+                'home_code': processed['home_code'],
+                'sport': processed.get('sport'),
+                'close_time': market.get('close_time', ''),
+                'away_ticker': None,
+                'home_ticker': None
             })
-            matched_count += 1
-            continue
-        
-        # Try fuzzy matching
-        for kalshi_game in kalshi_games:
-            if _fuzzy_match(poly_game, kalshi_game):
-                matched_games.append({
-                    'polymarket': poly_game,
-                    'kalshi': kalshi_game,
-                    'match_type': 'fuzzy'
-                })
-                matched_count += 1
-                break
+            if processed['team_code'] == processed['away_code']:
+                entry['away_prob'] = processed['probability']
+                entry['away_raw_price'] = processed['raw_price']
+                entry['away_ticker'] = market.get('ticker')
+            elif processed['team_code'] == processed['home_code']:
+                entry['home_prob'] = processed['probability']
+                entry['home_raw_price'] = processed['raw_price']
+                entry['home_ticker'] = market.get('ticker')
+        games = []
+        for entry in games_dict.values():
+            if 'away_prob' not in entry or 'home_prob' not in entry:
+                continue
+            away_raw = entry.get('away_raw_price', 0)
+            home_raw = entry.get('home_raw_price', 0)
+            total = away_raw + home_raw
+            if total > 0:
+                away_pct = (away_raw / total) * 100
+                home_pct = (home_raw / total) * 100
+                away_floor = math.floor(away_pct)
+                home_floor = math.floor(home_pct)
+                remainder = 100 - (away_floor + home_floor)
+                if away_raw <= home_raw:
+                    entry['away_prob'] = away_floor + remainder
+                    entry['home_prob'] = home_floor
+                else:
+                    entry['away_prob'] = away_floor
+                    entry['home_prob'] = home_floor + remainder
+            else:
+                entry['away_prob'] = entry['home_prob'] = 0
+            ticker = entry.get('away_ticker') or entry.get('home_ticker') or ''
+            entry['url'] = f"https://kalshi.com/markets/{ticker}" if ticker else ''
+            games.append(entry)
+        return games
     
-    print(f"Successfully matched {matched_count} games")
+    def _fetch_full_sweep():
+        extra_poly = []
+        extra_kalshi = []
+        try:
+            events = poly_api.get_all_events(limit=1000)
+            for event in events:
+                games = poly_api._process_event_for_all_sports(event)
+                _update_sport(games)
+                extra_poly.extend(games)
+        except Exception as e:
+            print(f"Polymarket full sweep error: {e}")
+        try:
+            markets = kalshi_api.get_all_markets(limit=1000)
+            extra_kalshi = _build_games_from_kalshi_markets(markets)
+            _update_sport(extra_kalshi)
+        except Exception as e:
+            print(f"Kalshi full sweep error: {e}")
+        return extra_poly, extra_kalshi
     
-    # Calculate arbitrage opportunities
-    arb_opportunities = []
-    for match in matched_games:
-        poly = match['polymarket']
-        kalshi = match['kalshi']
-        arb_details = _calculate_risk_free_details(poly, kalshi)
-        match['risk_free_arb'] = arb_details
-        if arb_details:
-            arb_opportunities.append({
-                'polymarket': poly,
-                'kalshi': kalshi,
-                'match_type': match['match_type'],
-                'arb_score': arb_details['roi_percent'],
-                'risk_free_arb': arb_details,
-                'riskFreeArb': _format_risk_free_details(arb_details)
-            })
+    # Normalize sport labels for existing data
+    _update_sport(poly_games)
+    _update_sport(kalshi_games)
     
-    # Transform data to homepage format for consistency
-    homepage_games = []
-    homepage_arb_games = []  # Games with arbitrage opportunities
+    search_iterations = 1
+    result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
-    # Process matched games for homepage format
-    for match in matched_games:
-        poly = match['polymarket']
-        kalshi = match['kalshi']
-        arb_details = match.get('risk_free_arb')
-        arb_score = arb_details['roi_percent'] if arb_details else 0
-        
-        # Calculate differences
-        away_diff = abs(poly['away_prob'] - kalshi['away_prob'])
-        home_diff = abs(poly['home_prob'] - kalshi['home_prob'])
-        max_diff = max(away_diff, home_diff)
-        
-        # Extract game time
-        game_time = poly.get('end_date', '')[:16] if poly.get('end_date') else ''
-        
-        # Get team logos (empty for now, can be enhanced later)
-        away_logo = ''
-        home_logo = ''
-        
-        homepage_game = {
-            'away_team': poly['away_team'],
-            'home_team': poly['home_team'],
-            'away_code': poly['away_code'],
-            'home_code': poly['home_code'],
-            'away_logo': away_logo,
-            'home_logo': home_logo,
-            'sport': poly.get('sport', 'unknown'),
-            'polymarket': {
-                'away': round(poly['away_prob'], 1),
-                'home': round(poly['home_prob'], 1),
-                'raw_away': poly.get('away_raw_price', poly['away_prob']),
-                'raw_home': poly.get('home_raw_price', poly['home_prob']),
-                'url': poly.get('url', ''),
-                'market_id': poly.get('market_id'),
-                'away_market_id': poly.get('away_market_id'),
-                'home_market_id': poly.get('home_market_id')
-            },
-            'kalshi': {
-                'away': round(kalshi['away_prob'], 1),
-                'home': round(kalshi['home_prob'], 1),
-                'raw_away': kalshi.get('away_raw_price', kalshi['away_prob']),
-                'raw_home': kalshi.get('home_raw_price', kalshi['home_prob']),
-                'url': kalshi.get('url', ''),
-                'away_ticker': kalshi.get('away_ticker'),
-                'home_ticker': kalshi.get('home_ticker')
-            },
-            'diff': {
-                'away': round(away_diff, 1),
-                'home': round(home_diff, 1),
-                'max': round(max_diff, 1)
-            },
-            'arbitrage_score': round(arb_score, 2) if arb_score > 0 else 0,
-            'game_time': game_time,
-            'match_type': match['match_type'],
-            'risk_free_arb': arb_details,
-            'riskFreeArb': _format_risk_free_details(arb_details)
-        }
-        
-        homepage_games.append(homepage_game)
-        
-        # Track games with positive arbitrage
-        if arb_details:
-            homepage_arb_games.append(homepage_game)
+    if not result.get('requirements_met'):
+        print("🔍 Expanding dataset with priority sports feeds...")
+        priority_poly, priority_kalshi = _fetch_priority_games()
+        poly_games = _merge_games(poly_games, priority_poly)
+        kalshi_games = _merge_games(kalshi_games, priority_kalshi)
+        search_iterations += 1
+        result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
-    # Process unmatched polymarket games for homepage format
-    for poly_game in poly_games:
-        # Skip if already processed in matched games
-        if any(poly_game['away_code'] == m['polymarket']['away_code'] and 
-               poly_game['home_code'] == m['polymarket']['home_code'] for m in matched_games):
-            continue
-            
-        game_time = poly_game.get('end_date', '')[:16] if poly_game.get('end_date') else ''
-        
-        homepage_game = {
-            'away_team': poly_game['away_team'],
-            'home_team': poly_game['home_team'],
-            'away_code': poly_game['away_code'],
-            'home_code': poly_game['home_code'],
-            'away_logo': '',
-            'home_logo': '',
-            'sport': poly_game.get('sport', 'unknown'),
-            'polymarket': {
-                'away': round(poly_game['away_prob'], 1),
-                'home': round(poly_game['home_prob'], 1),
-                'raw_away': poly_game.get('away_raw_price', poly_game['away_prob']),
-                'raw_home': poly_game.get('home_raw_price', poly_game['home_prob']),
-                'url': poly_game.get('url', ''),
-                'market_id': poly_game.get('market_id'),
-                'away_market_id': poly_game.get('away_market_id'),
-                'home_market_id': poly_game.get('home_market_id')
-            },
-            'kalshi': None,
-            'diff': {
-                'away': 0,
-                'home': 0,
-                'max': 0
-            },
-            'arbitrage_score': 0,
-            'game_time': game_time,
-            'match_type': 'unmatched',
-            'risk_free_arb': None
-        }
-        
-        homepage_games.append(homepage_game)
+    if not result.get('requirements_met'):
+        print("🔄 Expanding dataset with full market sweep...")
+        sweep_poly, sweep_kalshi = _fetch_full_sweep()
+        poly_games = _merge_games(poly_games, sweep_poly)
+        kalshi_games = _merge_games(kalshi_games, sweep_kalshi)
+        search_iterations += 1
+        result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
-    # Sort homepage games by arbitrage score and max difference
-    homepage_games.sort(key=lambda g: (g.get('arbitrage_score', 0), g.get('diff', {}).get('max', 0)), reverse=True)
-    
-    result = {
-        'success': True,
-        'timestamp': now.isoformat(),
-        'stats': {
-            'total_polymarket_games': len(poly_games),
-            'total_kalshi_games': len(kalshi_games),
-            'matched_games': matched_count,
-            'arb_opportunities': len(arb_opportunities),
-            'arb_homepage_games': len(homepage_arb_games),
-            'homepage_games': len(homepage_games),
-            'match_rate': (matched_count / min(len(poly_games), len(kalshi_games)) * 100) if min(len(poly_games), len(kalshi_games)) > 0 else 0,
-        },
-        'matched_games': matched_games,
-        'arb_opportunities': arb_opportunities,
-        'unmatched_polymarket': [g for g in poly_games if not any(g['away_code'] == m['polymarket']['away_code'] and g['home_code'] == m['polymarket']['home_code'] for m in matched_games)][:50],  # Limit for performance
-        'unmatched_kalshi': [g for g in kalshi_games if not any(g['away_code'] == m['kalshi']['away_code'] and g['home_code'] == m['kalshi']['home_code'] for m in matched_games)][:50],
-        # Add homepage format for consistency
-        'homepage_games': homepage_games,
-        'homepage_arb_games': homepage_arb_games
-    }
+    result['search_iterations'] = search_iterations
     
     # Cache the result
     try:
@@ -763,22 +774,106 @@ def _fuzzy_match(poly_game, kalshi_game, threshold=0.8):
 
 def _calculate_similarity(str1, str2):
     """
-    Calculate string similarity using Levenshtein distance
+    Calculate string similarity using improved algorithm
     """
     if str1 == str2:
         return 1.0
     
     len1, len2 = len(str1), len(str2)
-    if len1 == 0:
-        return 0.0
-    if len2 == 0:
+    if len1 == 0 or len2 == 0:
         return 0.0
     
-    # Simple similarity based on common characters
-    common = sum(1 for c in str1 if c in str2)
-    similarity = (2 * common) / (len1 + len2)
+    # Convert to lowercase for case-insensitive comparison
+    s1 = str1.lower()
+    s2 = str2.lower()
+    
+    # Exact match after normalization
+    if s1 == s2:
+        return 1.0
+    
+    # Check if one string contains the other
+    if s1 in s2 or s2 in s1:
+        return 0.9
+    
+    # Calculate Levenshtein distance
+    if len1 > len2:
+        s1, s2 = s2, s1
+        len1, len2 = len2, len1
+    
+    current_row = range(len1 + 1)
+    for i in range(1, len2 + 1):
+        previous_row, current_row = current_row, [i] + [0] * len1
+        for j in range(1, len1 + 1):
+            add, delete, change = previous_row[j] + 1, current_row[j-1] + 1, previous_row[j-1]
+            if s1[j-1] != s2[i-1]:
+                change += 1
+            current_row[j] = min(add, delete, change)
+    
+    # Normalize distance to similarity (0-1)
+    distance = current_row[len1]
+    max_len = max(len1, len2)
+    similarity = 1.0 - (distance / max_len)
     
     return similarity
+
+
+def _match_games_enhanced(poly_games, kalshi_games, fuzzy_threshold=0.7):
+    """Enhanced game matching that combines exact lookups with fuzzy matching."""
+    matched_games = []
+    matched_count = 0
+
+    kalshi_dict = {}
+    for game in kalshi_games:
+        key = f"{game.get('away_code')}@{game.get('home_code')}".lower()
+        kalshi_dict[key] = game
+
+    for poly_game in poly_games:
+        poly_key = f"{poly_game.get('away_code')}@{poly_game.get('home_code')}".lower()
+        if poly_key in kalshi_dict:
+            matched_games.append({
+                'polymarket': poly_game,
+                'kalshi': kalshi_dict[poly_key],
+                'match_type': 'exact'
+            })
+            matched_count += 1
+            continue
+
+        best_match = None
+        best_score = fuzzy_threshold
+
+        for kalshi_game in kalshi_games:
+            if not _fuzzy_match(poly_game, kalshi_game, threshold=fuzzy_threshold):
+                continue
+
+            away_sim = _calculate_similarity(
+                (poly_game.get('away_team', '') or '').lower().replace(' ', '').replace('-', ''),
+                (kalshi_game.get('away_team', '') or '').lower().replace(' ', '').replace('-', '')
+            )
+            home_sim = _calculate_similarity(
+                (poly_game.get('home_team', '') or '').lower().replace(' ', '').replace('-', ''),
+                (kalshi_game.get('home_team', '') or '').lower().replace(' ', '').replace('-', '')
+            )
+            avg_sim = (away_sim + home_sim) / 2
+
+            if avg_sim > best_score:
+                best_score = avg_sim
+                best_match = kalshi_game
+
+        if best_match:
+            matched_games.append({
+                'polymarket': poly_game,
+                'kalshi': best_match,
+                'match_type': 'fuzzy'
+            })
+            matched_count += 1
+
+    return matched_games, matched_count
+
+
+def _normalize_sport_label(value, default='UNKNOWN'):
+    if not value:
+        return default
+    return str(value).upper()
 
 
 def _calculate_arb_score(poly_game, kalshi_game):
@@ -789,6 +884,189 @@ def _calculate_arb_score(poly_game, kalshi_game):
     if not details:
         return 0
     return details['roi_percent']
+
+
+def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_arbs):
+    """Generate comprehensive all-sports payload with arbitrage analysis."""
+    matched_games, matched_count = _match_games_enhanced(poly_games, kalshi_games)
+
+    print(f"Successfully matched {matched_count} games")
+
+    arb_opportunities = []
+    homepage_games = []
+    homepage_arb_games = []
+
+    for match in matched_games:
+        poly = match['polymarket']
+        kalshi = match['kalshi']
+        arb_details = _calculate_risk_free_details(poly, kalshi)
+        match['risk_free_arb'] = arb_details
+        if arb_details:
+            formatted = _format_risk_free_details(arb_details)
+            match['riskFreeArb'] = formatted
+            arb_opportunities.append({
+                'polymarket': poly,
+                'kalshi': kalshi,
+                'match_type': match['match_type'],
+                'arb_score': arb_details['roi_percent'],
+                'risk_free_arb': arb_details,
+                'riskFreeArb': formatted
+            })
+
+        away_diff = abs(poly['away_prob'] - kalshi['away_prob'])
+        home_diff = abs(poly['home_prob'] - kalshi['home_prob'])
+        max_diff = max(away_diff, home_diff)
+        game_time = poly.get('end_date', '')[:16] if poly.get('end_date') else ''
+        sport_label = _normalize_sport_label(poly.get('sport') or kalshi.get('sport'))
+
+        homepage_game = {
+            'away_team': poly['away_team'],
+            'home_team': poly['home_team'],
+            'away_code': poly['away_code'],
+            'home_code': poly['home_code'],
+            'away_logo': '',
+            'home_logo': '',
+            'sport': sport_label,
+            'polymarket': {
+                'away': round(poly['away_prob'], 1),
+                'home': round(poly['home_prob'], 1),
+                'raw_away': poly.get('away_raw_price', poly['away_prob']),
+                'raw_home': poly.get('home_raw_price', poly['home_prob']),
+                'url': poly.get('url', ''),
+                'market_id': poly.get('market_id'),
+                'away_market_id': poly.get('away_market_id'),
+                'home_market_id': poly.get('home_market_id')
+            },
+            'kalshi': {
+                'away': round(kalshi['away_prob'], 1),
+                'home': round(kalshi['home_prob'], 1),
+                'raw_away': kalshi.get('away_raw_price', kalshi['away_prob']),
+                'raw_home': kalshi.get('home_raw_price', kalshi['home_prob']),
+                'url': kalshi.get('url', ''),
+                'away_ticker': kalshi.get('away_ticker'),
+                'home_ticker': kalshi.get('home_ticker')
+            },
+            'diff': {
+                'away': round(away_diff, 1),
+                'home': round(home_diff, 1),
+                'max': round(max_diff, 1)
+            },
+            'arbitrage_score': round(arb_details['roi_percent'], 2) if arb_details else 0,
+            'game_time': game_time,
+            'match_type': match['match_type'],
+            'risk_free_arb': arb_details,
+            'riskFreeArb': match.get('riskFreeArb')
+        }
+
+        homepage_games.append(homepage_game)
+        if arb_details:
+            homepage_arb_games.append(homepage_game)
+
+    matched_keys = {
+        f"{match['polymarket']['away_code']}@{match['polymarket']['home_code']}".lower()
+        for match in matched_games
+    }
+
+    for poly_game in poly_games:
+        poly_key = f"{poly_game['away_code']}@{poly_game['home_code']}".lower()
+        if poly_key in matched_keys:
+            continue
+
+        game_time = poly_game.get('end_date', '')[:16] if poly_game.get('end_date') else ''
+        sport_label = _normalize_sport_label(poly_game.get('sport'))
+
+        homepage_game = {
+            'away_team': poly_game['away_team'],
+            'home_team': poly_game['home_team'],
+            'away_code': poly_game['away_code'],
+            'home_code': poly_game['home_code'],
+            'away_logo': '',
+            'home_logo': '',
+            'sport': sport_label,
+            'polymarket': {
+                'away': round(poly_game['away_prob'], 1),
+                'home': round(poly_game['home_prob'], 1),
+                'raw_away': poly_game.get('away_raw_price', poly_game['away_prob']),
+                'raw_home': poly_game.get('home_raw_price', poly_game['home_prob']),
+                'url': poly_game.get('url', ''),
+                'market_id': poly_game.get('market_id'),
+                'away_market_id': poly_game.get('away_market_id'),
+                'home_market_id': poly_game.get('home_market_id')
+            },
+            'kalshi': None,
+            'diff': {'away': 0, 'home': 0, 'max': 0},
+            'arbitrage_score': 0,
+            'game_time': game_time,
+            'match_type': 'unmatched',
+            'risk_free_arb': None
+        }
+
+        homepage_games.append(homepage_game)
+
+    homepage_games.sort(key=lambda g: (g.get('arbitrage_score', 0), g.get('diff', {}).get('max', 0)), reverse=True)
+
+    requirements_met = matched_count >= min_matches and len(arb_opportunities) >= min_arbs
+    if requirements_met:
+        print(f"✅ Requirements met: {matched_count} matches, {len(arb_opportunities)} arb opportunities")
+    else:
+        print(f"⚠️ Requirements not met yet: {matched_count}/{min_matches} matches, {len(arb_opportunities)}/{min_arbs} arbs")
+
+    tradable_markets = []
+    tradable_by_sport = defaultdict(int)
+    for game in homepage_arb_games:
+        risk_detail = game.get('riskFreeArb') or game.get('risk_free_arb')
+        if not risk_detail:
+            continue
+        edge = risk_detail.get('edge') if isinstance(risk_detail, dict) and 'edge' in risk_detail else risk_detail.get('net_edge')
+        roi_percent = risk_detail.get('roiPercent') if isinstance(risk_detail, dict) and 'roiPercent' in risk_detail else risk_detail.get('roi_percent')
+        if edge is None or edge <= 0 or roi_percent is None:
+            continue
+        try:
+            min_roi = float(os.environ.get('PAPER_TRADING_MIN_ROI', 0))
+        except:
+            min_roi = 0.0
+        if roi_percent > min_roi:
+            tradable_markets.append(game)
+            sport_label = game.get('sport', 'UNKNOWN')
+            tradable_by_sport[sport_label] += 1
+
+    stats = {
+        'total_polymarket_games': len(poly_games),
+        'total_kalshi_games': len(kalshi_games),
+        'matched_games': matched_count,
+        'arb_opportunities': len(arb_opportunities),
+        'arb_homepage_games': len(homepage_arb_games),
+        'homepage_games': len(homepage_games),
+        'tradable_markets': len(tradable_markets),
+        'match_rate': (matched_count / min(len(poly_games), len(kalshi_games)) * 100) if min(len(poly_games), len(kalshi_games)) > 0 else 0,
+    }
+
+    result = {
+        'success': True,
+        'timestamp': now.isoformat(),
+        'requirements_met': requirements_met,
+        'stats': stats,
+        'matched_games': matched_games,
+        'arb_opportunities': arb_opportunities,
+        'tradable_markets': tradable_markets,
+        'tradable_by_sport': dict(tradable_by_sport),
+        'unmatched_polymarket': [
+            g for g in poly_games
+            if f"{g['away_code']}@{g['home_code']}".lower() not in matched_keys
+        ][:50],
+        'unmatched_kalshi': [
+            g for g in kalshi_games
+            if f"{g['away_code']}@{g['home_code']}".lower() not in {
+                f"{match['kalshi']['away_code']}@{match['kalshi']['home_code']}".lower()
+                for match in matched_games
+            }
+        ][:50],
+        'homepage_games': homepage_games,
+        'homepage_arb_games': homepage_arb_games
+    }
+
+    print(f"📊 Interim stats: {matched_count} matched, {len(arb_opportunities)} arbs, {len(tradable_markets)} tradable")
+    return result
 
 
 @app.route('/api/odds')
@@ -988,7 +1266,7 @@ def refresh_all_sports_odds():
 
 @app.route('/api/odds/multi')
 def get_multi_sport_odds():
-    """Aggregate NBA, NFL, NHL, and Football markets into a single feed"""
+    """Aggregate NBA, NFL, NHL, and Football markets into a single feed with explicit tradable market indicators"""
     now = datetime.now()
     try:
         nba_data = fetch_nba_data()
@@ -1004,11 +1282,13 @@ def get_multi_sport_odds():
         }
 
         combined_games = []
+        tradable_games = []
         overall_stats = {
             'total_games': 0,
             'poly_total': 0,
             'kalshi_total': 0,
-            'matched': 0
+            'matched': 0,
+            'tradable_markets': 0
         }
         per_sport_stats = {}
 
@@ -1030,6 +1310,36 @@ def get_multi_sport_odds():
             for game in sport_games:
                 enriched = dict(game)
                 enriched['sport'] = sport.upper()
+                
+                # Calculate risk-free arbitrage details if not already present
+                poly = game.get('polymarket', {})
+                kalshi = game.get('kalshi', {})
+                if poly and kalshi and not enriched.get('riskFreeArb'):
+                    arb_details = _calculate_risk_free_details(poly, kalshi)
+                    if arb_details:
+                        enriched['risk_free_arb'] = arb_details
+                        enriched['riskFreeArb'] = _format_risk_free_details(arb_details)
+                
+                # Mark as tradable if it meets paper trading conditions
+                risk_detail = enriched.get('riskFreeArb') or enriched.get('risk_free_arb')
+                is_tradable = False
+                if risk_detail:
+                    edge = risk_detail.get('edge') if isinstance(risk_detail, dict) and 'edge' in risk_detail else risk_detail.get('net_edge')
+                    roi_percent = risk_detail.get('roiPercent') if isinstance(risk_detail, dict) and 'roiPercent' in risk_detail else risk_detail.get('roi_percent')
+                    
+                    if edge is not None and edge > 0:
+                        try:
+                            min_roi = float(os.environ.get('PAPER_TRADING_MIN_ROI', 0))
+                        except:
+                            min_roi = 0.0
+                        
+                        if roi_percent is not None and roi_percent > min_roi:
+                            is_tradable = True
+                            overall_stats['tradable_markets'] += 1
+                            tradable_games.append(enriched)
+                
+                enriched['is_tradable'] = is_tradable
+                enriched['meets_paper_trade_conditions'] = is_tradable
                 combined_games.append(enriched)
 
         combined_games.sort(key=lambda g: (g.get('arbitrage_score', 0), g.get('diff', {}).get('max', 0)), reverse=True)
@@ -1040,7 +1350,8 @@ def get_multi_sport_odds():
             'sports': list(sport_payloads.keys()),
             'stats': overall_stats,
             'by_sport': per_sport_stats,
-            'games': combined_games
+            'games': combined_games,
+            'tradable_games': tradable_games  # Explicitly show tradable markets
         }
         return jsonify(result)
     except Exception as e:
