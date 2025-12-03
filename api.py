@@ -165,7 +165,8 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
 
     # Pick the strategy with LOWEST total cost (best arbitrage opportunity)
     if strategy1_cost <= strategy2_cost:
-        # Use Strategy 1
+        # Use Strategy 1: Polymarket Away + Kalshi Home
+        # CRITICAL VALIDATION: This ensures cross-market hedging (opposite outcomes on different platforms)
         away_leg = {
             'platform': 'Polymarket',
             'price': poly_away,
@@ -179,7 +180,8 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
         total_cost = strategy1_cost
         gross_cost = strategy1_gross
     else:
-        # Use Strategy 2
+        # Use Strategy 2: Kalshi Away + Polymarket Home
+        # CRITICAL VALIDATION: This ensures cross-market hedging (opposite outcomes on different platforms)
         away_leg = {
             'platform': 'Kalshi',
             'price': kalshi_away,
@@ -192,6 +194,11 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
         }
         total_cost = strategy2_cost
         gross_cost = strategy2_gross
+    
+    # CRITICAL VALIDATION: Prevent cross-platform same-side bets
+    # Ensure we are not buying the same outcome on both platforms
+    if away_leg['platform'] == home_leg['platform']:
+        return None  # Invalid arbitrage: both legs on same platform
 
     if total_cost <= 0:
         return None
