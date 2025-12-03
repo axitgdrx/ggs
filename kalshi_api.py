@@ -14,9 +14,7 @@ class KalshiAPI:
         "KXNFLGAME", "KXNFL",  # Football
         "KXNHLGAME", "KXNHL",  # Hockey
         "KXSOCCER", "KXEPLGAME", "KXUCLGAME", "KXUELGAME", "KXSOCCERGAME",  # Football/Soccer
-        "KXCS2", "KXDOTA2", "KXOVERWATCH", "KXCSGO",  # Esports
-        "KXESPORTS", "KXLOL", "KXDOTA", "KXVALORANT"
-    ]
+     ]
 
     def __init__(self):
         self.session = requests.Session()
@@ -488,6 +486,6 @@ class KalshiAPI:
         elif 'valorant' in ticker_lower:
             return 'valorant'
         elif 'esport' in ticker_lower:
-            return 'esports'
+            return 'other'
         else:
             return 'other'
