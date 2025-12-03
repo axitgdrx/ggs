@@ -20,8 +20,6 @@ from nhl_team_mapping import NHL_TEAM_LOGOS
 from football_polymarket_api import FootballPolymarketAPI
 from football_kalshi_api import FootballKalshiAPI
 from football_team_mapping import FOOTBALL_TEAM_LOGOS
-from esports_polymarket_api import EsportsPolymarketAPI
-from esports_kalshi_api import EsportsKalshiAPI
 from odds_api_aggregator import OddsAPIAggregator
 from manifold_api import ManifoldAPI
 from config import PLATFORMS
@@ -70,12 +68,6 @@ football_cache = {
     'cache_duration': 30
 }
 
-esports_cache = {
-    'data': None,
-    'timestamp': None,
-    'cache_duration': 30
-}
-
 
 # Historical data storage (keep last 60 data points = 30 minutes at 30s intervals)
 nba_game_history = defaultdict(lambda: {
@@ -100,13 +92,6 @@ nhl_game_history = defaultdict(lambda: {
 })
 
 football_game_history = defaultdict(lambda: {
-    'diff_history': deque(maxlen=60),
-    'poly_history': deque(maxlen=60),
-    'kalshi_history': deque(maxlen=60),
-    'timestamps': deque(maxlen=60)
-})
-
-esports_game_history = defaultdict(lambda: {
     'diff_history': deque(maxlen=60),
     'poly_history': deque(maxlen=60),
     'kalshi_history': deque(maxlen=60),
@@ -847,56 +832,6 @@ def get_football_odds():
         }), 500
 
 
-def _build_esports_payload(now):
-    poly_api = EsportsPolymarketAPI()
-    kalshi_api = EsportsKalshiAPI()
-
-    poly_games = poly_api.get_esports_games()
-    kalshi_games = kalshi_api.get_esports_games()
-
-    matched = match_games(poly_games, kalshi_games)
-    # Esports logos: we don't have a mapping yet, so pass empty dict
-    comparisons = calculate_comparisons(matched, {}, esports_game_history)
-
-    return {
-        'success': True,
-        'sport': 'esports',
-        'timestamp': now.isoformat(),
-        'stats': {
-            'total_games': len(comparisons),
-            'poly_total': len(poly_games),
-            'kalshi_total': len(kalshi_games),
-            'matched': len(matched)
-        },
-        'games': comparisons
-    }
-
-
-def fetch_esports_data(force_refresh=False):
-    now = datetime.now()
-    cached = _get_cached_data(esports_cache, now, force_refresh)
-    if cached:
-        return cached
-    result = _build_esports_payload(now)
-    _set_cache_data(esports_cache, result, now)
-    return result
-
-
-@app.route('/api/odds/esports')
-def get_esports_odds():
-    """Get Esports odds comparison data"""
-    try:
-        data = fetch_esports_data()
-        return jsonify(data)
-    except Exception as e:
-        now = datetime.now()
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'timestamp': now.isoformat()
-        }), 500
-
-
 @app.route('/api/odds/all-sports')
 def get_all_sports_odds():
     """Get comprehensive odds data from all sports categories"""
@@ -933,21 +868,19 @@ def refresh_all_sports_odds():
 
 @app.route('/api/odds/multi')
 def get_multi_sport_odds():
-    """Aggregate NBA, NFL, and NHL markets into a single feed"""
+    """Aggregate NBA, NFL, NHL, and Football markets into a single feed"""
     now = datetime.now()
     try:
         nba_data = fetch_nba_data()
         nfl_data = fetch_nfl_data()
         nhl_data = fetch_nhl_data()
         football_data = fetch_football_data()
-        esports_data = fetch_esports_data()
 
         sport_payloads = {
             'nba': nba_data,
             'nfl': nfl_data,
             'nhl': nhl_data,
             'football': football_data,
-            'esports': esports_data,
         }
 
         combined_games = []
@@ -1109,7 +1042,6 @@ def monitor_job():
             nfl = fetch_nfl_data()
             nhl = fetch_nhl_data()
             football = fetch_football_data()
-            esports = fetch_esports_data()
             
             all_games = []
             
@@ -1133,7 +1065,6 @@ def monitor_job():
             all_games.extend(extract_games(nfl, 'nfl'))
             all_games.extend(extract_games(nhl, 'nhl'))
             all_games.extend(extract_games(football, 'football'))
-            all_games.extend(extract_games(esports, 'esports'))
         else:
             # Use the comprehensive data
             all_games = []

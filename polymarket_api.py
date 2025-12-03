@@ -430,6 +430,6 @@ class PolymarketAPI:
         elif any(keyword in title_lower for keyword in ['valorant:']):
             return 'valorant'
         elif any(keyword in title_lower for keyword in ['esports:', 'esport']):
-            return 'esports'
+            return 'other'
         else:
             return 'other'
