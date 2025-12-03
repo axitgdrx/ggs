@@ -616,11 +616,6 @@
             return 'low';
         }
 
-        // 费用假设（与后端 ArbitrageDetector 保持一致）
-        const POLY_FEE = 0.02;   // Polymarket ~2%
-        const KALSHI_FEE = 0.07; // Kalshi ~7%
-        const SLIPPAGE_ESTIMATE = 0.005; // 额外 0.5% 滑点容忍
-
         function extractPrice(source, key) {
             if (!source) return null;
             const rawKey = key === 'away' ? 'raw_away' : 'raw_home';
@@ -642,10 +637,6 @@
             return Number.isInteger(rounded) ? rounded.toString() : rounded.toFixed(2);
         }
 
-        // 计算一场比赛在扣除双边手续费后的无风险套利情况
-
-        //       如果两边合计成本 < 100，则存在无风险套利，edge 为净收益百分比
-        
         // 过滤极端市场：任意盘口出现 0% 或 100% 时直接隐藏（通常是数据异常或已结算）
         function isDegenerateMarket(game) {
             try {
@@ -663,77 +654,10 @@
         }
 
 
-function calcRiskFreeArb(game) {
-            const poly = game.polymarket || {};
-            const kalshi = game.kalshi || {};
-
-            const polyAway = extractPrice(poly, 'away');
-            const polyHome = extractPrice(poly, 'home');
-            const kalshiAway = extractPrice(kalshi, 'away');
-            const kalshiHome = extractPrice(kalshi, 'home');
-
-            // 任意一边缺失价格则无法判断这种套利
-            if (
-                polyAway == null || polyHome == null ||
-                kalshiAway == null || kalshiHome == null
-            ) {
-                return null;
-            }
-
-            function pickBestSide(polyPrice, kalshiPrice) {
-                const polyEffective = polyPrice * (1 + POLY_FEE + SLIPPAGE_ESTIMATE);
-                const kalshiEffective = kalshiPrice * (1 + KALSHI_FEE + SLIPPAGE_ESTIMATE);
-
-                if (polyEffective <= kalshiEffective) {
-                    return {
-                        platform: 'Polymarket',
-                        price: polyPrice,
-                        effectivePrice: polyEffective
-                    };
-                }
-
-                return {
-                    platform: 'Kalshi',
-                    price: kalshiPrice,
-                    effectivePrice: kalshiEffective
-                };
-            }
-
-            const away = pickBestSide(polyAway, kalshiAway);
-            const home = pickBestSide(polyHome, kalshiHome);
-
-            const grossCost = away.price + home.price;               // 未扣手续费成本（例如 96）
-            const grossEdge = 100 - grossCost;                        // 未扣手续费理论毛利
-
-            const totalEffectiveCost = away.effectivePrice + home.effectivePrice; // 含手续费成本
-            if (totalEffectiveCost <= 0) return null;
-            const netEdge = 100 - totalEffectiveCost;                 // 含手续费净收益
-
-            // ROI Check: Require Net Yield > 0%
-            const roi = netEdge / totalEffectiveCost;
-            if (roi <= 0) {
-                return null;
-            }
-
-            return {
-                bestAwayPrice: away.price,
-                bestHomePrice: home.price,
-                bestAwayEffective: away.effectivePrice,
-                bestHomeEffective: home.effectivePrice,
-                bestAwayFrom: away.platform,
-                bestHomeFrom: home.platform,
-                totalCost: totalEffectiveCost,
-                edge: netEdge,
-                roi,
-                grossCost,
-                grossEdge
-            };
-        }
-
-
 function createGameCard(game) {
             if (isDegenerateMarket(game)) { return ''; }
-            const arb = calcRiskFreeArb(game);
+            // Use backend's validated cross-platform arbitrage data instead of calculating locally
+            const arb = game.riskFreeArb;
             if (!arb) {
                 return '';
             }
@@ -753,10 +677,13 @@ function createGameCard(game) {
             const awayBest = game.kalshi && (polyAway > kalshiAway) ? 'poly' : 'kalshi';
             const homeBest = game.kalshi && (polyHome > kalshiHome) ? 'poly' : 'kalshi';
 
-            // Investment Calculation
+            // Investment Calculation - Use backend's validated data
             const investInput = document.getElementById('investment-input');
             const totalInvestment = investInput ? (parseFloat(investInput.value) || 1000) : 1000;
 
+            // Use backend's validated arbitrage data
+            const roiPercent = arb.roiPercent || 0;
+            
             // 数值保护：避免 0 或 NaN 导致 NaN/Infinity
             const bestAwayEff = Math.max(0.0001, Number(arb.bestAwayEffective));
             const bestHomeEff = Math.max(0.0001, Number(arb.bestHomeEffective));
@@ -776,7 +703,7 @@ function createGameCard(game) {
             
             const expectedPayout = (payoutAway + payoutHome) / 2;
             const netProfit = expectedPayout - totalInvestment;
-            let roiPercent = (netProfit / totalInvestment) * 100;
+            
             if (!Number.isFinite(roiPercent)) { return ''; }
 
             return `
