@@ -152,6 +152,10 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
 
     if None in [poly_away, poly_home, kalshi_away, kalshi_home]:
         return None
+    
+    # Requirement 2: Reject zero prices
+    if poly_away <= 0 or poly_home <= 0 or kalshi_away <= 0 or kalshi_home <= 0:
+        return None
 
     away_leg = _pick_best_leg(poly_away, kalshi_away)
     home_leg = _pick_best_leg(poly_home, kalshi_home)
@@ -165,6 +169,8 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
 
     net_edge = 100 - total_cost
     roi = net_edge / total_cost
+    
+    # Requirement 4: More realistic arbitrage - only keep opportunities with positive ROI
     if roi <= 0:
         return None
 
@@ -549,8 +555,8 @@ def fetch_all_sports_data(force_refresh=False):
     def _game_key(game):
         away = (game.get('away_code') or game.get('away_team') or '').lower()
         home = (game.get('home_code') or game.get('home_team') or '').lower()
-        sport = (game.get('sport') or '').lower()
-        return f"{sport}:{away}@{home}"
+        # Requirement 3: Ignore sport category when deduplicating to avoid duplicate execution
+        return f"{away}@{home}"
     
     def _update_sport(games, sport_label=None):
         if not games:
@@ -712,23 +718,54 @@ def fetch_all_sports_data(force_refresh=False):
     search_iterations = 1
     result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
-    if not result.get('requirements_met'):
-        print("🔍 Expanding dataset with priority sports feeds...")
-        priority_poly, priority_kalshi = _fetch_priority_games()
-        poly_games = _merge_games(poly_games, priority_poly)
-        kalshi_games = _merge_games(kalshi_games, priority_kalshi)
-        search_iterations += 1
-        result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
-    
-    if not result.get('requirements_met'):
-        print("🔄 Expanding dataset with full market sweep...")
-        sweep_poly, sweep_kalshi = _fetch_full_sweep()
-        poly_games = _merge_games(poly_games, sweep_poly)
-        kalshi_games = _merge_games(kalshi_games, sweep_kalshi)
-        search_iterations += 1
-        result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
+    # Requirement 4: Keep searching until we meet minimum requirements
+    max_iterations = 5  # Prevent infinite loops
+    while not result.get('requirements_met') and search_iterations < max_iterations:
+        if search_iterations == 1:
+            print("🔍 Expanding dataset with priority sports feeds...")
+            priority_poly, priority_kalshi = _fetch_priority_games()
+            poly_games = _merge_games(poly_games, priority_poly)
+            kalshi_games = _merge_games(kalshi_games, priority_kalshi)
+            search_iterations += 1
+            result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
+        elif search_iterations == 2:
+            print("🔄 Expanding dataset with full market sweep...")
+            sweep_poly, sweep_kalshi = _fetch_full_sweep()
+            poly_games = _merge_games(poly_games, sweep_poly)
+            kalshi_games = _merge_games(kalshi_games, sweep_kalshi)
+            search_iterations += 1
+            result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
+        else:
+            # Additional sweeps with increased limits
+            print(f"🔄 Additional sweep iteration {search_iterations}...")
+            try:
+                extra_poly_events = poly_api.get_all_events(limit=2000)
+                for event in extra_poly_events:
+                    games = poly_api._process_event_for_all_sports(event)
+                    _update_sport(games)
+                    poly_games = _merge_games(poly_games, games)
+            except Exception as e:
+                print(f"Extra Polymarket sweep error: {e}")
+            
+            try:
+                extra_kalshi_markets = kalshi_api.get_all_markets(limit=2000)
+                extra_kalshi = _build_games_from_kalshi_markets(extra_kalshi_markets)
+                _update_sport(extra_kalshi)
+                kalshi_games = _merge_games(kalshi_games, extra_kalshi)
+            except Exception as e:
+                print(f"Extra Kalshi sweep error: {e}")
+            
+            search_iterations += 1
+            result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
     result['search_iterations'] = search_iterations
+    
+    # Log final status
+    stats = result.get('stats', {})
+    if result.get('requirements_met'):
+        print(f"✅ Requirements met after {search_iterations} iterations: {stats.get('matched_games')} matched, {stats.get('arb_opportunities')} arbs")
+    else:
+        print(f"⚠️ Requirements NOT fully met after {search_iterations} iterations: {stats.get('matched_games')}/{MIN_MATCHED_GAMES} matched, {stats.get('arb_opportunities')}/{MIN_ARB_OPPORTUNITIES} arbs")
     
     # Cache the result
     try:
@@ -895,10 +932,23 @@ def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_ar
     arb_opportunities = []
     homepage_games = []
     homepage_arb_games = []
+    
+    # Requirement 3: Track unique games to prevent duplicates from different categories
+    seen_game_keys = set()
 
     for match in matched_games:
         poly = match['polymarket']
         kalshi = match['kalshi']
+        
+        # Create unique game identifier to prevent duplicate processing
+        game_key = f"{poly['away_code']}@{poly['home_code']}".lower()
+        
+        # Skip if we've already processed this game (requirement 3)
+        if game_key in seen_game_keys:
+            print(f"⚠️ Skipping duplicate game: {poly['away_team']} vs {poly['home_team']} ({poly.get('sport', 'unknown')})")
+            continue
+        seen_game_keys.add(game_key)
+        
         arb_details = _calculate_risk_free_details(poly, kalshi)
         match['risk_free_arb'] = arb_details
         if arb_details:
@@ -971,6 +1021,11 @@ def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_ar
         poly_key = f"{poly_game['away_code']}@{poly_game['home_code']}".lower()
         if poly_key in matched_keys:
             continue
+        
+        # Requirement 3: Skip duplicates even if they appear in unmatched list
+        if poly_key in seen_game_keys:
+            continue
+        seen_game_keys.add(poly_key)
 
         game_time = poly_game.get('end_date', '')[:16] if poly_game.get('end_date') else ''
         sport_label = _normalize_sport_label(poly_game.get('sport'))
@@ -1565,28 +1620,60 @@ def monitor_job():
         
         print(f"Processing {len(all_games)} games for arbitrage opportunities...")
         
+        # Requirement 3: Remove duplicates from different categories before processing
+        seen_game_keys = set()
+        unique_games = []
+        duplicate_count = 0
+        
+        for game in all_games:
+            game_key = f"{game.get('away_code')}@{game.get('home_code')}".lower()
+            if game_key in seen_game_keys:
+                duplicate_count += 1
+                continue
+            seen_game_keys.add(game_key)
+            unique_games.append(game)
+        
+        if duplicate_count > 0:
+            print(f"✅ Removed {duplicate_count} duplicate games from different categories")
+        
         # 添加调试信息：显示每个体育项目的游戏数量
         sport_counts = {}
-        for game in all_games:
+        for game in unique_games:
             sport = (game.get('sport') or 'unknown').upper()
             sport_counts[sport] = sport_counts.get(sport, 0) + 1
-        print(f"Games by sport: {sport_counts}")
+        print(f"Games by sport (after dedup): {sport_counts}")
         
         # 筛选出真正满足无风险套利条件的市场
         tradable_games = []
         filtered_games = []
-        for game in all_games:
+        for game in unique_games:
+            # Requirement 2: Check for zero prices
+            poly = game.get('polymarket', {})
+            kalshi = game.get('kalshi', {})
+            
+            # Skip games with zero prices
+            if poly and (poly.get('raw_away', 0) <= 0 or poly.get('raw_home', 0) <= 0):
+                continue
+            if kalshi and (kalshi.get('raw_away', 0) <= 0 or kalshi.get('raw_home', 0) <= 0):
+                continue
+            
             risk_detail = game.get('riskFreeArb')
             if not risk_detail and game.get('risk_free_arb'):
                 risk_detail = _format_risk_free_details(game.get('risk_free_arb'))
                 if risk_detail:
                     game['riskFreeArb'] = risk_detail
+            
+            # Additional check for zero prices in risk details
+            if risk_detail:
+                if risk_detail.get('bestAwayPrice', 0) <= 0 or risk_detail.get('bestHomePrice', 0) <= 0:
+                    continue
+            
             if risk_detail and risk_detail.get('edge') is not None and risk_detail.get('edge') > 0:
                 tradable_games.append(game)
             else:
                 filtered_games.append(game)
         
-        print(f"Tradable markets (ROI>0 after fees): {len(tradable_games)} / {len(all_games)}")
+        print(f"Tradable markets (ROI>0 after fees): {len(tradable_games)} / {len(unique_games)}")
         if filtered_games:
             sample = filtered_games[:5]
             sample_descriptions = [
