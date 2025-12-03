@@ -11,9 +11,12 @@ class KalshiAPI:
     # Expanded series tickers for broader coverage
     ALL_SPORTS_TICKERS = [
         "KXNBAGAME", "KXNBA",  # Basketball
-        "KXNFLGAME", "KXNFL",  # Football
-        "KXNHLGAME", "KXNHL",  # Hockey
-        "KXSOCCER", "KXEPLGAME", "KXUCLGAME", "KXUELGAME", "KXSOCCERGAME",  # Football/Soccer
+        "KXNFLGAME", "KXNFL", "KXNFLSPREAD", "KXNFLML", # Football
+        "KXNHLGAME", "KXNHL", "KXUHFH",  # Hockey
+        "KXSOCCER", "KXEPLGAME", "KXUCLGAME", "KXUELGAME", "KXSOCCERGAME", "KXLALIGA", "KXFAWC", # Football/Soccer
+        "KXWNBA", "KXWNFL", "KXCOLLEGEFB", "KXCOLLEGEBB", "KXCOLLEGEHOOPS", # College sports
+        "KXCRICKET", "KXRUGBY", "KXTENNIS", "KXGOLF", "KXBOXING", "KXUFC", # Other sports
+        "KXESPORTS", "KXCS2", "KXDOTA", "KXVALORANT"  # Esports
      ]
 
     def __init__(self):
