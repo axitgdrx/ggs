@@ -1,0 +1,105 @@
+{
+    "balance": 9838.925000000001,
+    "initial_balance": 10000.0,
+    "bets": [
+        {
+            "id": "POR@TOR",
+            "game": "Trail Blazers vs Raptors",
+            "sport": "other",
+            "timestamp": "2025-12-03T01:24:50.305699",
+            "legs": [
+                {
+                    "platform": "Kalshi",
+                    "price": 18,
+                    "eff": 19.349999999999998,
+                    "team": "Trail Blazers",
+                    "code": "POR",
+                    "market_id": null,
+                    "url": "https://kalshi.com/markets/KXNBAGAME-25DEC02PORTOR-POR",
+                    "fee_rate": 0.07,
+                    "cost_usd": 19.349999999999998,
+                    "fee_usd": 1.3499999999999976,
+                    "payout_usd": 100.0,
+                    "slippage_usd": 0.09
+                },
+                {
+                    "platform": "Polymarket",
+                    "price": 60.5,
+                    "eff": 62.012499999999996,
+                    "team": "Raptors",
+                    "code": "TOR",
+                    "market_id": "705401",
+                    "url": "https://polymarket.com/event/nba-por-tor-2025-12-02",
+                    "fee_rate": 0.02,
+                    "cost_usd": 62.0125,
+                    "fee_usd": 1.5125,
+                    "payout_usd": 100.0,
+                    "slippage_usd": 0.3025
+                }
+            ],
+            "quantity": 100.0,
+            "cost": 81.3625,
+            "payout": 100.0,
+            "profit": 18.637500000000003,
+            "roi_percent": 22.90674450760486,
+            "status": "pending",
+            "settled_amount": 0.0,
+            "realized_profit": 0.0,
+            "fees_total_usd": 2.8624999999999976,
+            "slippage_total_usd": 0.39249999999999996,
+            "arb_type": "perfect",
+            "total_cost_per_unit": 81.3625,
+            "bet_amount_config": 100.0
+        },
+        {
+            "id": "Predators@Avalanche",
+            "game": "Predators vs Avalanche",
+            "sport": "other",
+            "timestamp": "2025-12-03T01:24:50.308452",
+            "legs": [
+                {
+                    "platform": "Kalshi",
+                    "price": 26,
+                    "eff": 27.95,
+                    "team": "Predators",
+                    "code": "Predators",
+                    "market_id": null,
+                    "url": "https://kalshi.com/markets/KXNBAGAME-25DEC03PORCLE-POR",
+                    "fee_rate": 0.07,
+                    "cost_usd": 27.95,
+                    "fee_usd": 1.95,
+                    "payout_usd": 100.0,
+                    "slippage_usd": 0.13
+                },
+                {
+                    "platform": "Polymarket",
+                    "price": 50.5,
+                    "eff": 51.762499999999996,
+                    "team": "Avalanche",
+                    "code": "Avalanche",
+                    "market_id": "685748",
+                    "url": "https://polymarket.com/event/nhl-nsh-col-2025-12-14",
+                    "fee_rate": 0.02,
+                    "cost_usd": 51.7625,
+                    "fee_usd": 1.2625,
+                    "payout_usd": 100.0,
+                    "slippage_usd": 0.2525
+                }
+            ],
+            "quantity": 100.0,
+            "cost": 79.71249999999999,
+            "payout": 100.0,
+            "profit": 20.28750000000001,
+            "roi_percent": 25.450838952485512,
+            "status": "pending",
+            "settled_amount": 0.0,
+            "realized_profit": 0.0,
+            "fees_total_usd": 3.2125,
+            "slippage_total_usd": 0.3825,
+            "arb_type": "perfect",
+            "total_cost_per_unit": 79.71249999999999,
+            "bet_amount_config": 100.0
+        }
+    ],
+    "total_profit": 0.0
+}

@@ -474,6 +474,108 @@ def fetch_all_sports_data(force_refresh=False):
                 'arb_score': arb_score
             })
     
+    # Transform data to homepage format for consistency
+    homepage_games = []
+    
+    # Process matched games for homepage format
+    for match in matched_games:
+        poly = match['polymarket']
+        kalshi = match['kalshi']
+        
+        # Calculate differences
+        away_diff = abs(poly['away_prob'] - kalshi['away_prob'])
+        home_diff = abs(poly['home_prob'] - kalshi['home_prob'])
+        max_diff = max(away_diff, home_diff)
+        
+        # Extract game time
+        game_time = poly.get('end_date', '')[:16] if poly.get('end_date') else ''
+        
+        # Get team logos (empty for now, can be enhanced later)
+        away_logo = ''
+        home_logo = ''
+        
+        homepage_game = {
+            'away_team': poly['away_team'],
+            'home_team': poly['home_team'],
+            'away_code': poly['away_code'],
+            'home_code': poly['home_code'],
+            'away_logo': away_logo,
+            'home_logo': home_logo,
+            'sport': poly.get('sport', 'unknown'),
+            'polymarket': {
+                'away': round(poly['away_prob'], 1),
+                'home': round(poly['home_prob'], 1),
+                'raw_away': poly.get('away_raw_price', poly['away_prob']),
+                'raw_home': poly.get('home_raw_price', poly['home_prob']),
+                'url': poly.get('url', ''),
+                'market_id': poly.get('market_id'),
+                'away_market_id': poly.get('away_market_id'),
+                'home_market_id': poly.get('home_market_id')
+            },
+            'kalshi': {
+                'away': round(kalshi['away_prob'], 1),
+                'home': round(kalshi['home_prob'], 1),
+                'raw_away': kalshi.get('away_raw_price', kalshi['away_prob']),
+                'raw_home': kalshi.get('home_raw_price', kalshi['home_prob']),
+                'url': kalshi.get('url', ''),
+                'away_ticker': kalshi.get('away_ticker'),
+                'home_ticker': kalshi.get('home_ticker')
+            },
+            'diff': {
+                'away': round(away_diff, 1),
+                'home': round(home_diff, 1),
+                'max': round(max_diff, 1)
+            },
+            'arbitrage_score': min(round(arb_score), 100) if arb_score > 0 else 0,
+            'game_time': game_time,
+            'match_type': match['match_type']
+        }
+        
+        homepage_games.append(homepage_game)
+    
+    # Process unmatched polymarket games for homepage format
+    for poly_game in poly_games:
+        # Skip if already processed in matched games
+        if any(poly_game['away_code'] == m['polymarket']['away_code'] and 
+               poly_game['home_code'] == m['polymarket']['home_code'] for m in matched_games):
+            continue
+            
+        game_time = poly_game.get('end_date', '')[:16] if poly_game.get('end_date') else ''
+        
+        homepage_game = {
+            'away_team': poly_game['away_team'],
+            'home_team': poly_game['home_team'],
+            'away_code': poly_game['away_code'],
+            'home_code': poly_game['home_code'],
+            'away_logo': '',
+            'home_logo': '',
+            'sport': poly_game.get('sport', 'unknown'),
+            'polymarket': {
+                'away': round(poly_game['away_prob'], 1),
+                'home': round(poly_game['home_prob'], 1),
+                'raw_away': poly_game.get('away_raw_price', poly_game['away_prob']),
+                'raw_home': poly_game.get('home_raw_price', poly_game['home_prob']),
+                'url': poly_game.get('url', ''),
+                'market_id': poly_game.get('market_id'),
+                'away_market_id': poly_game.get('away_market_id'),
+                'home_market_id': poly_game.get('home_market_id')
+            },
+            'kalshi': None,
+            'diff': {
+                'away': 0,
+                'home': 0,
+                'max': 0
+            },
+            'arbitrage_score': 0,
+            'game_time': game_time,
+            'match_type': 'unmatched'
+        }
+        
+        homepage_games.append(homepage_game)
+    
+    # Sort homepage games by arbitrage score and max difference
+    homepage_games.sort(key=lambda g: (g.get('arbitrage_score', 0), g.get('diff', {}).get('max', 0)), reverse=True)
+    
     result = {
         'success': True,
         'timestamp': now.isoformat(),
@@ -487,7 +589,9 @@ def fetch_all_sports_data(force_refresh=False):
         'matched_games': matched_games,
         'arb_opportunities': arb_opportunities,
         'unmatched_polymarket': [g for g in poly_games if not any(g['away_code'] == m['polymarket']['away_code'] and g['home_code'] == m['polymarket']['home_code'] for m in matched_games)][:50],  # Limit for performance
-        'unmatched_kalshi': [g for g in kalshi_games if not any(g['away_code'] == m['kalshi']['away_code'] and g['home_code'] == m['kalshi']['home_code'] for m in matched_games)][:50]
+        'unmatched_kalshi': [g for g in kalshi_games if not any(g['away_code'] == m['kalshi']['away_code'] and g['home_code'] == m['kalshi']['home_code'] for m in matched_games)][:50],
+        # Add homepage format for consistency
+        'homepage_games': homepage_games
     }
     
     # Cache the result
