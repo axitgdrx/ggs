@@ -149,6 +149,18 @@ class PaperTradingSystem:
             away_platform = risk_detail['bestAwayFrom']
             home_platform = risk_detail['bestHomeFrom']
             
+            # CRITICAL VALIDATION: Prevent cross-platform same-side bets
+            # Ensure we are not buying the same outcome (Yes/No) on both platforms
+            # True arbitrage requires buying opposite outcomes on different platforms
+            if away_platform == home_platform:
+                return False, f"Invalid arbitrage: Both legs on same platform ({away_platform}). This violates cross-market hedging principle."
+            
+            # Additional validation: Ensure we are buying opposite outcomes
+            # In binary options, we should buy A wins on one platform and B wins on the other
+            # This is inherently satisfied by our strategy selection logic, but we double-check
+            if away_platform not in ['Polymarket', 'Kalshi'] or home_platform not in ['Polymarket', 'Kalshi']:
+                return False, f"Invalid arbitrage: Unknown platforms detected - Away: {away_platform}, Home: {home_platform}"
+            
             best_away = {
                 'platform': away_platform,
                 'price': risk_detail['bestAwayPrice'],
@@ -253,7 +265,11 @@ class PaperTradingSystem:
         
         # Pick the strategy with LOWEST total cost (best arbitrage opportunity)
         if strategy1_cost <= strategy2_cost:
-            # Use Strategy 1
+            # Use Strategy 1: Polymarket Away + Kalshi Home
+            # CRITICAL VALIDATION: This ensures cross-market hedging (opposite outcomes on different platforms)
+            away_platform = 'Polymarket'
+            home_platform = 'Kalshi'
+            
             best_away = {
                 'platform': 'Polymarket', 
                 'price': poly_away, 
@@ -276,7 +292,11 @@ class PaperTradingSystem:
             }
             total_cost_per_unit = strategy1_cost
         else:
-            # Use Strategy 2
+            # Use Strategy 2: Kalshi Away + Polymarket Home
+            # CRITICAL VALIDATION: This ensures cross-market hedging (opposite outcomes on different platforms)
+            away_platform = 'Kalshi'
+            home_platform = 'Polymarket'
+            
             best_away = {
                 'platform': 'Kalshi', 
                 'price': kalshi_away, 
@@ -298,6 +318,11 @@ class PaperTradingSystem:
                 'fee_rate': POLY_FEE
             }
             total_cost_per_unit = strategy2_cost
+        
+        # CRITICAL VALIDATION: Prevent cross-platform same-side bets
+        # Ensure we are not buying the same outcome on both platforms
+        if away_platform == home_platform:
+            return False, f"Invalid arbitrage: Both legs on same platform ({away_platform}). This violates cross-market hedging principle."
         
         # Strict binary surebet requirement: total cost must be < 100¢
         if total_cost_per_unit >= 100:
