@@ -434,6 +434,93 @@ class PaperTradingSystem:
         
         return any(team in away_team or team in home_team for team in major_teams)
 
+    def is_paper_trading_eligible_market(self, game):
+        """
+        Check if a game is eligible for paper trading based on sport.
+        
+        This method defines the specific markets that satisfy paper trading conditions:
+        - NBA (Basketball): High liquidity, 2-way markets
+        - NHL (Hockey): High liquidity, 2-way markets  
+        - NFL (Football): High liquidity, 2-way markets
+        
+        Markets excluded:
+        - SOCCER: 3-way markets (Win/Loss/Draw) cannot be properly handled by binary arbitrage logic
+        
+        Returns:
+            bool: True if sport is eligible for paper trading
+        """
+        # Eligible sports for paper trading - NBA, NHL, NFL
+        eligible_sports = [
+            'BASKETBALL', 'FOOTBALL', 'HOCKEY',  # Sport names from APIs
+            'NBA', 'NFL', 'NHL',  # Explicit sport codes
+            'basketball', 'football', 'hockey'  # Lowercase variations
+        ]
+        
+        # Explicitly excluded sports
+        excluded_sports = [
+            'SOCCER', 'soccer', 'FOOTBALL'  # Football soccer (3-way markets)
+        ]
+        
+        sport = game.get('sport', '').upper()
+        
+        # Check if sport is explicitly excluded
+        if sport in [s.upper() for s in excluded_sports]:
+            return False
+            
+        # Check if sport is in eligible list
+        if sport in eligible_sports:
+            return True
+            
+        # Additional validation: Check for major team names to identify high-liquidity games
+        if self._is_high_liquidity_game(game):
+            return True
+            
+        return False
+
+    def get_eligible_markets_summary(self):
+        """
+        Get a summary of sports that are eligible for paper trading.
+        
+        Returns:
+            dict: Summary of eligible markets with descriptions
+        """
+        return {
+            'eligible_sports': {
+                'NBA': {
+                    'name': 'National Basketball Association',
+                    'market_type': '2-way (Win/Loss)',
+                    'description': 'High liquidity basketball markets',
+                    'platforms': ['Polymarket', 'Kalshi']
+                },
+                'NHL': {
+                    'name': 'National Hockey League', 
+                    'market_type': '2-way (Win/Loss)',
+                    'description': 'High liquidity hockey markets',
+                    'platforms': ['Polymarket', 'Kalshi']
+                },
+                'NFL': {
+                    'name': 'National Football League',
+                    'market_type': '2-way (Win/Loss)', 
+                    'description': 'High liquidity football markets',
+                    'platforms': ['Polymarket', 'Kalshi']
+                }
+            },
+            'excluded_sports': {
+                'SOCCER': {
+                    'name': 'Association Football (Soccer)',
+                    'market_type': '3-way (Win/Draw/Loss)',
+                    'reason': 'Binary arbitrage logic cannot handle 3-way markets'
+                }
+            },
+            'trading_conditions': [
+                'Must be 2-way binary markets only',
+                'Cross-platform arbitrage opportunities required', 
+                'Minimum ROI threshold must be met',
+                'Adequate liquidity required',
+                'Zero prices prohibited'
+            ]
+        }
+
     def update_settlements(self, check_status_func):
         """
         Check pending bets and settle them if resolved.
