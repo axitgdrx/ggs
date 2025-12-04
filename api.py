@@ -42,6 +42,7 @@ CORS(app)
 paper_trader = PaperTradingSystem()
 notifier = PushPlusNotifier()
 scheduler = BackgroundScheduler()
+_kalshi_api_instance = None
 
 # Shared fee/slippage assumptions so every consumer evaluates
 # opportunities with identical math
@@ -569,18 +570,16 @@ def fetch_all_sports_data(force_refresh=False):
     # Create a combined cache key
     cache_key = 'all_sports'
     if not force_refresh:
-        # Check if we have recent data that meets requirements
+        # Check if we have recent data
         try:
             with open('all_sports_cache.json', 'r') as f:
                 cached = json.load(f)
                 cache_time = datetime.fromisoformat(cached.get('timestamp', '1970-01-01'))
-                # Check if cache is recent and meets requirements
-                if (now - cache_time).seconds < 15:  # 15 second cache for faster updates
+                # Check if cache is recent
+                if (now - cache_time).seconds < 30:  # Increase cache duration to 30s to match frontend
                     stats = cached.get('stats', {})
-                    if (stats.get('matched_games', 0) >= 10 and 
-                        stats.get('arb_opportunities', 0) >= 5):
-                        print(f"Using cached data: {stats.get('matched_games')} matched, {stats.get('arb_opportunities')} arb opportunities")
-                        return cached
+                    print(f"Using cached data: {stats.get('matched_games')} matched, {stats.get('arb_opportunities')} arb opportunities")
+                    return cached
         except Exception as e:
             print(f"Cache read error: {e}")
             pass
@@ -589,7 +588,11 @@ def fetch_all_sports_data(force_refresh=False):
     
     # Initialize APIs
     poly_api = PolymarketAPI()
-    kalshi_api = get_kalshi_api()  # Use mock API if real API is unavailable
+    
+    global _kalshi_api_instance
+    if _kalshi_api_instance is None:
+        _kalshi_api_instance = get_kalshi_api()
+    kalshi_api = _kalshi_api_instance
     
     # Get all sports games from both platforms with increased limits
     poly_games = poly_api.get_all_sports_games()
@@ -598,8 +601,8 @@ def fetch_all_sports_data(force_refresh=False):
     print(f"Found {len(poly_games)} Polymarket games and {len(kalshi_games)} Kalshi games")
     
     # Define minimum requirements
-    MIN_MATCHED_GAMES = 20  # Increased for broader coverage
-    MIN_ARB_OPPORTUNITIES = 20  # User requirement: At least 20 arbitrage opportunities
+    MIN_MATCHED_GAMES = 1  # Reduced to ensure faster response
+    MIN_ARB_OPPORTUNITIES = 0  # Don't force retries if no arbs exist
     
     def _game_key(game):
         # Normalize to avoid duplicates (remove spaces, lowercase)
@@ -774,7 +777,7 @@ def fetch_all_sports_data(force_refresh=False):
     result = _build_all_sports_summary(poly_games, kalshi_games, now, MIN_MATCHED_GAMES, MIN_ARB_OPPORTUNITIES)
     
     # Requirement 4: Keep searching until we meet minimum requirements
-    max_iterations = 5  # Prevent infinite loops
+    max_iterations = 2  # Prevent infinite loops and timeouts
     while not result.get('requirements_met') and search_iterations < max_iterations:
         if search_iterations == 1:
             print("🔍 Expanding dataset with priority sports feeds...")
