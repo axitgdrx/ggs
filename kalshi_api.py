@@ -22,6 +22,25 @@ class KalshiAPI:
     def __init__(self):
         self.session = requests.Session()
 
+    def get_market(self, ticker: str) -> Dict:
+        """
+        Get a single market by ticker
+        """
+        if not ticker:
+            return None
+            
+        url = f"{self.BASE_URL}/markets/{ticker}"
+        try:
+            response = self.session.get(url, timeout=10)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            data = response.json()
+            return data.get('market')
+        except requests.RequestException as e:
+            print(f"Error fetching market {ticker}: {e}")
+            return None
+
     def get_markets_by_ticker(self, series_ticker: str, limit: int = 500) -> List[Dict]:
         """
         Get markets from Kalshi filtered by series ticker

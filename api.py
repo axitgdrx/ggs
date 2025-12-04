@@ -1483,6 +1483,20 @@ def check_paper_trading_settlements():
     
     def resolve_polymarket_winner(market):
         winning_id = market.get('winningOutcomeId')
+        
+        # Fallback: check outcomePrices if market is resolved
+        if not winning_id and market.get('umaResolutionStatus') == 'resolved':
+            try:
+                 outcome_prices = json.loads(market.get('outcomePrices', '[]'))
+                 outcomes = json.loads(market.get('outcomes', '[]'))
+                 if len(outcome_prices) == len(outcomes):
+                     # Find which one is 1 (or close to 1)
+                     for i, price in enumerate(outcome_prices):
+                         if float(price) >= 0.99:
+                             return outcomes[i]
+            except:
+                pass
+
         if not winning_id:
             return None
             
@@ -1511,8 +1525,10 @@ def check_paper_trading_settlements():
             if platform == 'Polymarket':
                 market = poly_api.get_market(market_id)
                 if not market:
+                    print(f"Polymarket market {market_id} not found")
                     return {'resolved': False}
                     
+                # print(f"DEBUG: Market {market_id} closed={market.get('closed')}")
                 if market.get('closed') is True:
                      winner_name = resolve_polymarket_winner(market)
                      
@@ -1522,10 +1538,14 @@ def check_paper_trading_settlements():
 
                      # Handling for Yes/No outcomes in Polymarket
                      if winner_name == 'Yes':
-                         # If outcome is Yes, we need to know WHICH team this market was for.
-                         # But we don't have the team context here easily.
-                         # However, for Moneyline markets, outcomes are usually Team Names.
+                         group_title = market.get('groupItemTitle')
+                         if group_title:
+                             return {'resolved': True, 'winner': group_title}
                          pass
+                     elif winner_name == 'No':
+                         group_title = market.get('groupItemTitle')
+                         if group_title:
+                             return {'resolved': True, 'winner': f"NOT {group_title}"}
                          
                      print(f"✅ Polymarket settlement: {market_id} -> {winner_name}")
                      return {
