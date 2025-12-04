@@ -139,6 +139,17 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
     """
     poly_away = _extract_price_value(poly_game, 'away')
     poly_home = _extract_price_value(poly_game, 'home')
+
+    # Fix for Soccer 3-way markets:
+    # Soccer markets usually include a Draw option (Home/Away/Draw).
+    # The current binary arbitrage logic (Strategy 1: Poly Away + Kalshi Home) assumes only two outcomes.
+    # This leads to false positives because it ignores the Draw probability.
+    # Until we implement 3-way arbitrage logic (checking Poly Draw + Kalshi Draw), 
+    # we must disable arbitrage detection for Soccer to prevent users from losing money.
+    sport = poly_game.get('sport') or kalshi_game.get('sport')
+    if sport == 'SOCCER':
+        return None
+
     kalshi_away = _extract_price_value(kalshi_game, 'away')
     kalshi_home = _extract_price_value(kalshi_game, 'home')
 

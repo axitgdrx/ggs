@@ -192,8 +192,8 @@ class FootballPolymarketAPI(PolymarketAPI):
              pass
 
         if found_away or found_home:
-            # Normalize to 100% (Draw No Bet style)
-            norm_away, norm_home = self._normalize_pair(away_prob, home_prob)
+            # Do not normalize for Soccer
+            # norm_away, norm_home = self._normalize_pair(away_prob, home_prob)
             
             slug = event.get("slug", "")
             return {
@@ -201,8 +201,8 @@ class FootballPolymarketAPI(PolymarketAPI):
                 "home_team": home_team,
                 "away_code": away_code,
                 "home_code": home_code,
-                "away_prob": norm_away,
-                "home_prob": norm_home,
+                "away_prob": away_prob,
+                "home_prob": home_prob,
                 "away_market_id": away_market_id,
                 "home_market_id": home_market_id,
                 "end_date": event.get("endDate", ""),
@@ -305,12 +305,11 @@ class FootballPolymarketAPI(PolymarketAPI):
             elif item["code"] == home_code:
                 home_prob = item["raw_prob"]
 
-        # Use updated proportional normalization
-        norm_away, norm_home = self._normalize_pair(away_prob, home_prob)
-
+        # Do not normalize for Soccer as it is a 3-way market (Win/Draw/Win)
+        # Normalizing to 100% hides the Draw probability and causes false arbitrage detection
         return {
-            away_code: norm_away,
-            home_code: norm_home,
+            away_code: away_prob,
+            home_code: home_prob,
         }
 
 if __name__ == '__main__':
