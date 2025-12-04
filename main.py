@@ -6,8 +6,6 @@ Compares odds between Polymarket and Kalshi to find arbitrage opportunities
 
 from polymarket_api import PolymarketAPI
 from kalshi_api import KalshiAPI
-from football_polymarket_api import FootballPolymarketAPI
-from football_kalshi_api import FootballKalshiAPI
 from nhl_polymarket_api import NHLPolymarketAPI
 from nhl_kalshi_api import NHLKalshiAPI
 
@@ -191,15 +189,6 @@ def main():
     )
     all_comparisons.extend(nhl_comparisons)
 
-    # Process Football
-    football_comparisons = process_sport(
-        "FOOTBALL",
-        FootballPolymarketAPI(),
-        FootballKalshiAPI(),
-        "get_football_games",
-        "get_football_games"
-    )
-    all_comparisons.extend(football_comparisons)
 
     print(f"\n✨ Total comparisons across all sports: {len(all_comparisons)}")
 
