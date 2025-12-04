@@ -20,6 +20,8 @@ from nhl_team_mapping import NHL_TEAM_LOGOS
 from football_polymarket_api import FootballPolymarketAPI
 from football_kalshi_api import FootballKalshiAPI
 from football_team_mapping import FOOTBALL_TEAM_LOGOS
+from crypto_polymarket_api import CryptoPolymarketAPI
+from crypto_kalshi_api import CryptoKalshiAPI
 from odds_api_aggregator import OddsAPIAggregator
 from manifold_api import ManifoldAPI
 from config import PLATFORMS
@@ -651,6 +653,24 @@ def fetch_all_sports_data(force_refresh=False):
             priority_kalshi.extend(nba_kalshi)
         except Exception as e:
             print(f"NBA Kalshi fetch error: {e}")
+            
+        # Crypto
+        try:
+            crypto_poly_api = CryptoPolymarketAPI()
+            crypto_poly = crypto_poly_api.get_crypto_markets()
+            _update_sport(crypto_poly, 'CRYPTO')
+            priority_poly.extend(crypto_poly)
+        except Exception as e:
+            print(f"Crypto Polymarket fetch error: {e}")
+            
+        try:
+            crypto_kalshi_api = CryptoKalshiAPI()
+            crypto_kalshi = crypto_kalshi_api.get_crypto_markets()
+            _update_sport(crypto_kalshi, 'CRYPTO')
+            priority_kalshi.extend(crypto_kalshi)
+        except Exception as e:
+            print(f"Crypto Kalshi fetch error: {e}")
+
         try:
             nfl_poly_api = NFLPolymarketAPI()
             nfl_poly = nfl_poly_api.get_nfl_games()
