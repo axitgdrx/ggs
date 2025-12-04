@@ -456,9 +456,9 @@ class PaperTradingSystem:
             'basketball', 'football', 'hockey'  # Lowercase variations
         ]
         
-        # Explicitly excluded sports
+        # Explicitly excluded sports (soccer/football that refers to 3-way markets)
         excluded_sports = [
-            'SOCCER', 'soccer', 'FOOTBALL'  # Football soccer (3-way markets)
+            'SOCCER', 'soccer'  # Soccer (3-way markets)
         ]
         
         sport = game.get('sport', '').upper()
