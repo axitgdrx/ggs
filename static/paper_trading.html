@@ -47,6 +47,7 @@
         .stat-label { font-size: 12px; color: #aaa; text-transform: uppercase; margin-bottom: 5px; }
         .stat-value { font-size: 28px; font-weight: 700; color: #fff; }
         .green { color: #10b981; }
+        .red { color: #ff4d4d; }
         
         .section-title { font-size: 20px; margin-bottom: 15px; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; }
         
@@ -165,10 +166,22 @@
                 const response = await fetch('/api/paper/state');
                 const data = await response.json();
                 
+                const formatProfit = (val) => {
+                     const sign = val >= 0 ? '+' : '-';
+                     return `${sign}$${Math.abs(val).toFixed(2)}`;
+                };
+                
                 document.getElementById('balance').textContent = '$' + data.balance.toFixed(2);
                 document.getElementById('initial').textContent = '$' + data.initial_balance.toFixed(2);
-                document.getElementById('profit').textContent = '+$' + data.total_profit.toFixed(2);
-                document.getElementById('estimated-profit').textContent = '+$' + data.estimated_profit.toFixed(2);
+                
+                const profitEl = document.getElementById('profit');
+                profitEl.textContent = formatProfit(data.total_profit);
+                profitEl.className = 'stat-value ' + (data.total_profit >= 0 ? 'green' : 'red');
+                
+                const estProfitEl = document.getElementById('estimated-profit');
+                estProfitEl.textContent = formatProfit(data.estimated_profit);
+                estProfitEl.className = 'stat-value ' + (data.estimated_profit >= 0 ? 'green' : 'red');
+
                 document.getElementById('trades-count').textContent = data.total_trades;
                 
                 const tbody = document.getElementById('trades-body');
@@ -226,6 +239,10 @@
                             legsHtml += `<div style="font-size:10px; color:#888; margin-top:4px;">Total Fees: $${bet.fees_total_usd.toFixed(2)}</div>`;
                         }
                     }
+                    
+                    const profitClass = bet.profit >= 0 ? 'green' : 'red';
+                    const profitText = formatProfit(bet.profit);
+                    const roiClass = bet.roi_percent >= 0 ? 'green' : 'red';
 
                     row.innerHTML = `
                         <td class="time-cell">
@@ -238,8 +255,8 @@
                         <td>${legsHtml}</td>
                         <td>$${bet.cost.toFixed(2)}</td>
                         <td>$${bet.payout.toFixed(2)}</td>
-                        <td class="green">+$${bet.profit.toFixed(2)}</td>
-                        <td class="green">${bet.roi_percent.toFixed(2)}%</td>
+                        <td class="${profitClass}">${profitText}</td>
+                        <td class="${roiClass}">${bet.roi_percent.toFixed(2)}%</td>
                         <td><span class="badge badge-locked">${bet.status}</span></td>
                     `;
                     tbody.appendChild(row);
