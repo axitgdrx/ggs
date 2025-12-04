@@ -414,7 +414,11 @@ class PaperTradingSystem:
 
     def _is_high_liquidity_game(self, game):
         """Determine if a game has high liquidity based on sport and teams"""
-        high_liquidity_sports = ['basketball', 'football', 'hockey']
+        # Include NBA, NFL, NHL sports names and their common variations
+        high_liquidity_sports = [
+            'basketball', 'football', 'hockey', 
+            'nba', 'nfl', 'nhl'
+        ]
         sport = game.get('sport', '').lower()
         
         # Major sports typically have higher liquidity
@@ -422,7 +426,9 @@ class PaperTradingSystem:
             return True
             
         # Check for major teams (simplified)
-        major_teams = ['Lakers', 'Warriors', 'Bucks', 'Nets', 'Celtics', 'Heat', 'Nuggets', 'Suns']
+        major_teams = ['Lakers', 'Warriors', 'Bucks', 'Nets', 'Celtics', 'Heat', 'Nuggets', 'Suns',
+                      'Cowboys', 'Packers', 'Patriots', 'Chiefs', 'Ravens', 'Steelers', 'Saints', 'Eagles',
+                      'Rangers', 'Oilers', 'Bruins', 'Maple Leafs', 'Blackhawks', 'Red Wings', 'Penguins', 'Kings']
         away_team = game.get('away_team', '')
         home_team = game.get('home_team', '')
         
