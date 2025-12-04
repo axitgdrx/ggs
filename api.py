@@ -598,16 +598,20 @@ def fetch_all_sports_data(force_refresh=False):
     print(f"Found {len(poly_games)} Polymarket games and {len(kalshi_games)} Kalshi games")
     
     # Define minimum requirements
-    MIN_MATCHED_GAMES = 10
-    MIN_ARB_OPPORTUNITIES = 5
+    MIN_MATCHED_GAMES = 20  # Increased for broader coverage
+    MIN_ARB_OPPORTUNITIES = 20  # User requirement: At least 20 arbitrage opportunities
     
     def _game_key(game):
         # Normalize to avoid duplicates (remove spaces, lowercase)
         # Prioritize away_code/home_code if available, otherwise use team names
         away = (game.get('away_code') or game.get('away_team') or '').lower().replace(' ', '').replace('-', '').strip()
         home = (game.get('home_code') or game.get('home_team') or '').lower().replace(' ', '').replace('-', '').strip()
+        
+        # Strict deduplication: Sort teams to handle A vs B and B vs A as the same game
+        teams = sorted([away, home])
+        
         # Requirement 3: Ignore sport category when deduplicating to avoid duplicate execution
-        return f"{away}@{home}"
+        return f"{teams[0]}@{teams[1]}"
     
     def _update_sport(games, sport_label=None):
         if not games:
@@ -974,6 +978,22 @@ def _calculate_arb_score(poly_game, kalshi_game):
     return details['roi_percent']
 
 
+def _format_game_time(iso_time):
+    """Format ISO time string to readable format"""
+    if not iso_time:
+        return ''
+    try:
+        # Handle 'Z' for UTC if present
+        clean_time = iso_time.replace('Z', '+00:00')
+        # Simple string slicing fallback if strictly ISO
+        if 'T' in clean_time:
+            dt = datetime.fromisoformat(clean_time)
+            return dt.strftime('%Y-%m-%d %H:%M')
+        return clean_time[:16]
+    except (ValueError, TypeError):
+        return str(iso_time)[:16]
+
+
 def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_arbs):
     """Generate comprehensive all-sports payload with arbitrage analysis."""
     matched_games, matched_count = _match_games_enhanced(poly_games, kalshi_games)
@@ -992,7 +1012,11 @@ def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_ar
         kalshi = match['kalshi']
         
         # Create unique game identifier to prevent duplicate processing
-        game_key = f"{poly['away_code']}@{poly['home_code']}".lower()
+        # Strict deduplication: Sort teams to handle A vs B and B vs A as the same game
+        p_away = (poly.get('away_code') or poly.get('away_team') or '').lower().replace(' ', '').replace('-', '').strip()
+        p_home = (poly.get('home_code') or poly.get('home_team') or '').lower().replace(' ', '').replace('-', '').strip()
+        teams = sorted([p_away, p_home])
+        game_key = f"{teams[0]}@{teams[1]}"
         
         # Skip if we've already processed this game (requirement 3)
         if game_key in seen_game_keys:
@@ -1017,7 +1041,11 @@ def _build_all_sports_summary(poly_games, kalshi_games, now, min_matches, min_ar
         away_diff = abs(poly['away_prob'] - kalshi['away_prob'])
         home_diff = abs(poly['home_prob'] - kalshi['home_prob'])
         max_diff = max(away_diff, home_diff)
-        game_time = poly.get('end_date', '')[:16] if poly.get('end_date') else ''
+        
+        # Use start_date if available (more accurate for game time), otherwise end_date
+        raw_time = poly.get('start_date') or poly.get('end_date') or ''
+        game_time = _format_game_time(raw_time)
+        
         sport_label = _normalize_sport_label(poly.get('sport') or kalshi.get('sport'))
 
         homepage_game = {
