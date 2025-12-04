@@ -445,6 +445,20 @@ class PaperTradingSystem:
                     platform = leg.get('platform')
                     market_id = leg.get('market_id')
                     
+                    # Attempt to recover market_id from URL if missing (specifically for Kalshi)
+                    if not market_id and platform == 'Kalshi' and leg.get('url'):
+                        try:
+                            url = leg.get('url')
+                            if '/markets/' in url:
+                                parts = url.split('/markets/')
+                                if len(parts) > 1:
+                                    ticker = parts[1].split('?')[0].split('#')[0]
+                                    market_id = ticker
+                                    leg['market_id'] = market_id
+                                    changed = True # Save recovered ID
+                        except:
+                            pass
+
                     if not market_id:
                         # Fallback for old bets or missing data
                         continue
