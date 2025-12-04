@@ -97,8 +97,10 @@ class FootballKalshiAPI(KalshiAPI):
 
                 if team_code == away_code or normalize_team_name(team_code, 'kalshi') == away_code:
                     games_dict[game_id]['away_raw'] = probability
+                    games_dict[game_id]['away_ticker'] = ticker
                 elif team_code == home_code or normalize_team_name(team_code, 'kalshi') == home_code:
                     games_dict[game_id]['home_raw'] = probability
+                    games_dict[game_id]['home_ticker'] = ticker
 
             games = []
             for game_id, game_data in games_dict.items():
@@ -128,9 +130,11 @@ class FootballKalshiAPI(KalshiAPI):
                     game_data['away_prob'] = away_prob
                     game_data['home_prob'] = home_prob
 
-                    ticker = game_data.get('ticker', '')
-                    if ticker:
-                        game_data['url'] = f'https://kalshi.com/markets/{ticker}'
+                    # Prefer non-tie ticker for the main URL
+                    main_ticker = game_data.get('away_ticker') or game_data.get('home_ticker') or game_data.get('ticker', '')
+                    if main_ticker:
+                        game_data['url'] = f'https://kalshi.com/markets/{main_ticker}'
+                        game_data['ticker'] = main_ticker
 
                     games.append(game_data)
 
