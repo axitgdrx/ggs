@@ -702,6 +702,11 @@ function calcRiskFreeArb(game) {
             const away = pickBestSide(polyAway, kalshiAway);
             const home = pickBestSide(polyHome, kalshiHome);
 
+            // CRITICAL VALIDATION: Prevent same-platform bets
+            if (away.platform === home.platform) {
+                return null;
+            }
+
             const grossCost = away.price + home.price;               // 未扣手续费成本（例如 96）
             const grossEdge = 100 - grossCost;                        // 未扣手续费理论毛利
 

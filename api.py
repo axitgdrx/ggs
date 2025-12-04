@@ -591,8 +591,10 @@ def fetch_all_sports_data(force_refresh=False):
     MIN_ARB_OPPORTUNITIES = 5
     
     def _game_key(game):
-        away = (game.get('away_code') or game.get('away_team') or '').lower()
-        home = (game.get('home_code') or game.get('home_team') or '').lower()
+        # Normalize to avoid duplicates (remove spaces, lowercase)
+        # Prioritize away_code/home_code if available, otherwise use team names
+        away = (game.get('away_code') or game.get('away_team') or '').lower().replace(' ', '').replace('-', '').strip()
+        home = (game.get('home_code') or game.get('home_team') or '').lower().replace(' ', '').replace('-', '').strip()
         # Requirement 3: Ignore sport category when deduplicating to avoid duplicate execution
         return f"{away}@{home}"
     
@@ -1505,41 +1507,64 @@ def check_paper_trading_settlements():
         return None
 
     def check_status(platform, market_id):
-        if platform == 'Polymarket':
-            market = poly_api.get_market(market_id)
-            if not market:
-                return {'resolved': False}
-                
-            if market.get('closed') is True:
-                 winner_name = resolve_polymarket_winner(market)
-                 # Normalize winner name to match leg['team'] or leg['code']?
-                 # resolve_polymarket_winner returns the outcome name (e.g. "Boston Celtics").
-                 # leg['team'] is "Boston Celtics".
-                 return {
-                     'resolved': True,
-                     'winner': winner_name
-                 }
-            else:
-                 return {'resolved': False}
-                 
-        elif platform == 'Kalshi':
-            market = kalshi_api.get_market(market_id)
-            if not market:
-                return {'resolved': False}
-                
-            status = market.get('status')
-            if status in ['finalized', 'settled']:
-                result = market.get('result')
-                if result == 'yes':
+        try:
+            if platform == 'Polymarket':
+                market = poly_api.get_market(market_id)
+                if not market:
+                    return {'resolved': False}
+                    
+                if market.get('closed') is True:
+                     winner_name = resolve_polymarket_winner(market)
+                     
+                     if winner_name is None:
+                         # Market closed but winner not available/resolvable yet
+                         return {'resolved': False}
+
+                     # Handling for Yes/No outcomes in Polymarket
+                     if winner_name == 'Yes':
+                         # If outcome is Yes, we need to know WHICH team this market was for.
+                         # But we don't have the team context here easily.
+                         # However, for Moneyline markets, outcomes are usually Team Names.
+                         pass
+                         
+                     print(f"✅ Polymarket settlement: {market_id} -> {winner_name}")
+                     return {
+                         'resolved': True,
+                         'winner': winner_name
+                     }
+                else:
+                     return {'resolved': False}
+                     
+            elif platform == 'Kalshi':
+                market = kalshi_api.get_market(market_id)
+                if not market:
+                    return {'resolved': False}
+                    
+                status = market.get('status')
+                if status in ['finalized', 'settled']:
+                    result = market.get('result')
+                    print(f"✅ Kalshi settlement: {market_id} -> {result}")
+                    
+                    # Parse ticker to find teams
+                    # Format: KX-SPORT-TEAM1-TEAM2-DATE
                     parts = market_id.split('-')
-                    if len(parts) >= 3:
-                        # This returns the code, e.g. "BKN"
-                        return {'resolved': True, 'winner': parts[2]}
-                elif result == 'no':
-                     return {'resolved': True, 'winner': 'OTHER_TEAM'}
-            else:
-                return {'resolved': False}
-                
+                    primary_team = parts[2] if len(parts) >= 3 else None
+                    secondary_team = parts[3] if len(parts) >= 4 else None
+                    
+                    if result == 'yes':
+                        return {'resolved': True, 'winner': primary_team}
+                    elif result == 'no':
+                         # If primary lost, secondary won
+                         winner = secondary_team if secondary_team else 'OTHER_TEAM'
+                         return {'resolved': True, 'winner': winner}
+                    else:
+                         return {'resolved': True, 'winner': 'VOID'}
+                else:
+                    return {'resolved': False}
+        except Exception as e:
+            print(f"Error in check_status: {e}")
+            return {'resolved': False}
+            
         return {'resolved': False}
 
     try:

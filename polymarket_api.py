@@ -2,7 +2,31 @@ import requests
 import json
 import math
 from typing import List, Dict, Optional
-from team_mapping import normalize_team_name
+from team_mapping import normalize_team_name as normalize_nba
+try:
+    from nfl_team_mapping import normalize_team_name as normalize_nfl
+except ImportError:
+    normalize_nfl = lambda x, y: None
+try:
+    from nhl_team_mapping import normalize_team_name as normalize_nhl
+except ImportError:
+    normalize_nhl = lambda x, y: None
+try:
+    from football_team_mapping import normalize_team_name as normalize_football
+except ImportError:
+    normalize_football = lambda x, y: None
+
+def normalize_team_name(name, platform='polymarket'):
+    # Try all normalizers
+    code = normalize_nba(name, platform)
+    if code: return code
+    code = normalize_nfl(name, platform)
+    if code: return code
+    code = normalize_nhl(name, platform)
+    if code: return code
+    code = normalize_football(name, platform)
+    if code: return code
+    return None
 
 class PolymarketAPI:
     BASE_URL = "https://gamma-api.polymarket.com"
