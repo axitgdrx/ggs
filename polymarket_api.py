@@ -277,6 +277,7 @@ class PolymarketAPI:
                     'home_raw_price': raw_probs.get(home_code, 0),
                     'slug': slug,
                     'end_date': winner_market.get('endDate', ''),
+                    'start_date': event.get('startDate', ''),
                     'url': f'https://polymarket.com/event/{slug}',
                 }
 
@@ -436,6 +437,7 @@ class PolymarketAPI:
                 'home_raw_price': raw_probs.get(home_code, 0),
                 'slug': slug,
                 'end_date': winner_market.get('endDate', ''),
+                'start_date': event.get('startDate', ''),
                 'url': f'https://polymarket.com/event/{slug}',
                 'sport': self._detect_sport_from_title(title)
             }
