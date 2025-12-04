@@ -1698,7 +1698,16 @@ def monitor_job():
         # 筛选出真正满足无风险套利条件的市场
         tradable_games = []
         filtered_games = []
+        ineligible_sports = []
+        
         for game in unique_games:
+            # NEW: Check if sport is eligible for paper trading (NBA, NHL, NFL only)
+            if not paper_trader.is_paper_trading_eligible_market(game):
+                sport = game.get('sport', 'unknown').upper()
+                if sport not in ineligible_sports:
+                    ineligible_sports.append(sport)
+                continue
+            
             # Requirement 2: Check for zero prices
             poly = game.get('polymarket', {})
             kalshi = game.get('kalshi', {})
@@ -1726,6 +1735,11 @@ def monitor_job():
                 filtered_games.append(game)
         
         print(f"Tradable markets (ROI>0 after fees): {len(tradable_games)} / {len(unique_games)}")
+        
+        # Report filtered and ineligible sports
+        if ineligible_sports:
+            print(f"🚫 Ineligible sports (not paper trading eligible): {set(ineligible_sports)}")
+            
         if filtered_games:
             sample = filtered_games[:5]
             sample_descriptions = [
@@ -1791,6 +1805,36 @@ def index():
 def serve_static(path):
     """Serve static files"""
     return send_from_directory('static', path)
+
+@app.route('/api/eligible-markets')
+def eligible_markets():
+    """Get list of markets eligible for paper trading (NBA, NHL, NFL)"""
+    try:
+        markets_info = paper_trader.get_eligible_markets_summary()
+        return jsonify({
+            'success': True,
+            'data': markets_info
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+@app.route('/api/paper-trading-state')
+def paper_trading_state():
+    """Get current paper trading state and recent trades"""
+    try:
+        state = paper_trader.get_state()
+        return jsonify({
+            'success': True,
+            'data': state
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 if __name__ == '__main__':
     # Create static folder if not exists
