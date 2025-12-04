@@ -450,8 +450,38 @@ class PolymarketAPI:
         return games
 
     def _detect_sport_from_title(self, title: str) -> str:
-        """Detect sport type from title"""
+        """
+        Enhanced sport detection using multiple methods:
+        1. Team name mapping (most reliable)
+        2. Title prefixes
+        3. Title keywords
+        """
         title_lower = title.lower()
+        
+        # Extract team names from title
+        away_team, home_team = self._extract_teams_from_title(title)
+        
+        # Method 1: Use team mapping to detect sport (most reliable)
+        if away_team and home_team:
+            away_team_lower = away_team.lower()
+            home_team_lower = home_team.lower()
+            
+            # Check NBA teams
+            nba_teams = self._get_nba_team_list()
+            if (away_team_lower in nba_teams or home_team_lower in nba_teams):
+                return 'basketball'
+            
+            # Check NFL teams  
+            nfl_teams = self._get_nfl_team_list()
+            if (away_team_lower in nfl_teams or home_team_lower in nfl_teams):
+                return 'football'
+                
+            # Check NHL teams
+            nhl_teams = self._get_nhl_team_list()
+            if (away_team_lower in nhl_teams or home_team_lower in nhl_teams):
+                return 'hockey'
+        
+        # Method 2: Check for sport prefixes in title
         if any(keyword in title_lower for keyword in ['nba:', 'basketball']):
             return 'basketball'
         elif any(keyword in title_lower for keyword in ['nfl:', 'football']):
@@ -469,4 +499,75 @@ class PolymarketAPI:
         elif any(keyword in title_lower for keyword in ['esports:', 'esport']):
             return 'other'
         else:
+            # Method 3: Infer from common team name patterns
+            if self._contains_esports_indicators(title):
+                return 'other'  # Esports
+            elif self._contains_traditional_sports_indicators(title):
+                # Try to determine which traditional sport
+                if any(word in title_lower for word in ['basketball', 'hoops']):
+                    return 'basketball'
+                elif any(word in title_lower for word in ['football', 'qb', 'touchdown']):
+                    return 'football'
+                elif any(word in title_lower for word in ['hockey', 'puck', 'goalie']):
+                    return 'hockey'
+            
             return 'other'
+    
+    def _extract_teams_from_title(self, title):
+        """Extract away and home team names from title"""
+        # Remove common prefixes
+        prefixes_to_strip = ['NBA:', 'NFL:', 'NHL:', 'EPL:', 'LoL:', 'CS2:', 'Dota 2:', 'Valorant:', 'MLB:']
+        clean_title = title
+        for prefix in prefixes_to_strip:
+            if clean_title.startswith(prefix):
+                clean_title = clean_title[len(prefix):].strip()
+                break
+        
+        # Split by 'vs' or 'vs.'
+        separator = ' vs. ' if ' vs. ' in clean_title else ' vs '
+        if separator in clean_title:
+            teams = clean_title.split(separator)
+            if len(teams) == 2:
+                return teams[0].strip(), teams[1].strip()
+        
+        return None, None
+    
+    def _contains_esports_indicators(self, title):
+        """Check if title contains esports indicators"""
+        esports_keywords = ['lol', 'dota', 'valorant', 'cs2', 'counter-strike', 'league of legends', 
+                          'overwatch', 'rocket league', 'fifa', 'esports', 'gaming']
+        title_lower = title.lower()
+        return any(keyword in title_lower for keyword in esports_keywords)
+    
+    def _contains_traditional_sports_indicators(self, title):
+        """Check if title contains traditional sports indicators"""
+        traditional_keywords = ['basketball', 'football', 'hockey', 'baseball', 'soccer', 
+                             'tennis', 'golf', 'boxing', 'mma']
+        title_lower = title.lower()
+        return any(keyword in title_lower for keyword in traditional_keywords)
+    
+    def _get_nba_team_list(self):
+        """Get list of NBA team names for detection"""
+        return ['lakers', 'warriors', 'celtics', 'heat', 'nets', 'bucks', 'nuggets', 'suns',
+                '76ers', 'knicks', 'clippers', 'mavericks', 'grizzlies', 'timberwolves', 
+                'pelicans', 'kings', 'trail blazers', 'jazz', 'thunder',
+                'rockets', 'spurs', 'pacers', 'bulls', 'cavaliers', 'pistons', 'hornets',
+                'magic', 'wizards', 'hawks', 'raptors', 'pacers', 'blazers', 'warriors',
+                'golden state warriors', 'los angeles lakers', 'boston celtics', 'miami heat',
+                'brooklyn nets', 'milwaukee bucks', 'denver nuggets', 'phoenix suns']
+    
+    def _get_nfl_team_list(self):
+        """Get list of NFL team names for detection"""
+        return ['chiefs', 'bengals', 'bills', 'dolphins', 'patriots', 'jets', 'ravens', 
+                'steelers', 'texans', 'colts', 'jaguars', 'titans', 'broncos', 'raiders',
+                'chargers', 'browns', 'bears', 'lions', 'packers', 'vikings', 'cowboys',
+                'giants', 'eagles', 'redskins', 'falcons', 'panthers', 'saints', 'buccaneers',
+                'cardinals', 'rams', '49ers', 'seahawks']
+    
+    def _get_nhl_team_list(self):
+        """Get list of NHL team names for detection"""
+        return ['bruins', 'sabres', 'red wings', 'panthers', 'canadiens', 'senators',
+                'lightning', 'maple leafs', 'hurricanes', 'blue jackets', 'rangers',
+                'islanders', 'flyers', 'penguins', 'capitals', 'blackhawks', 'avalanche',
+                'stars', 'wild', 'predators', 'blues', 'jets', 'ducks', 'coyotes',
+                'oilers', 'kings', 'sharks', 'knights', 'canucks', 'golden knights']
