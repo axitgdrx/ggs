@@ -29,6 +29,7 @@ from collections import defaultdict, deque
 from dotenv import load_dotenv
 from apscheduler.schedulers.background import BackgroundScheduler
 from paper_trading import PaperTradingSystem
+from real_trading import RealTradingSystem
 from pushplus_notifier import PushPlusNotifier
 import atexit
 
@@ -38,7 +39,17 @@ app = Flask(__name__, static_folder='static')
 CORS(app)
 
 # Initialize subsystems
-paper_trader = PaperTradingSystem()
+# Choose trading system based on LIVE_TRADING environment variable
+LIVE_TRADING_ENABLED = os.environ.get('LIVE_TRADING', 'false').lower() == 'true'
+if LIVE_TRADING_ENABLED:
+    print("⚠️  LIVE TRADING ENABLED - Real trades will be executed!")
+    trading_system = RealTradingSystem()
+else:
+    print("📄 Paper Trading Mode - No real trades will be executed")
+    trading_system = PaperTradingSystem()
+
+# Keep paper_trader reference for backward compatibility
+paper_trader = trading_system
 notifier = PushPlusNotifier()
 scheduler = BackgroundScheduler()
 _kalshi_api_instance = None
@@ -1447,8 +1458,41 @@ def reset_paper_state():
     paper_trader.reset_data()
     return jsonify({'success': True})
 
-def check_paper_trading_settlements():
-    print("Checking paper trading settlements...")
+@app.route('/api/trading/mode')
+def get_trading_mode():
+    """Get current trading mode (paper or real)"""
+    return jsonify({
+        'live_trading_enabled': LIVE_TRADING_ENABLED,
+        'mode': 'real' if LIVE_TRADING_ENABLED else 'paper',
+        'timestamp': datetime.now().isoformat()
+    })
+
+@app.route('/api/trading/state')
+def get_trading_state():
+    """Get trading state (works for both paper and real trading)"""
+    state = paper_trader.get_state()
+    state['mode'] = 'real' if LIVE_TRADING_ENABLED else 'paper'
+    return jsonify(state)
+
+@app.route('/api/trading/reset', methods=['POST'])
+def reset_trading_state():
+    """Reset trading state"""
+    if LIVE_TRADING_ENABLED:
+        # Add confirmation check for real trading
+        reset_key = request.json.get('confirmation_key') if request.json else None
+        expected_key = os.environ.get('LIVE_TRADING_RESET_KEY')
+        if expected_key and reset_key != expected_key:
+            return jsonify({'success': False, 'error': 'Invalid confirmation key'}), 401
+    
+    paper_trader.reset_data()
+    return jsonify({'success': True})
+
+def check_trading_settlements():
+    """Check settlements for both paper and real trading systems"""
+    if LIVE_TRADING_ENABLED:
+        print("Checking real trading settlements...")
+    else:
+        print("Checking paper trading settlements...")
     
     poly_api = PolymarketAPI()
     kalshi_api = KalshiAPI()
@@ -1565,12 +1609,20 @@ def check_paper_trading_settlements():
         print(f"Error checking settlements: {e}")
 
 def monitor_job():
-    """Background job to check for arbs and execute paper trades - NBA, NFL, NHL only"""
+    """Background job to check for arbs and execute trades (paper or real) - NBA, NFL, NHL only"""
     # print(f"[{datetime.now().strftime('%H:%M:%S')}] Running monitor job...")
     
-    # Check if paper trading is enabled
-    if str(os.environ.get('PAPER_TRADING_ENABLED', 'false')).lower() != 'true':
+    # Check if trading is enabled (either paper or live)
+    trading_enabled = (
+        str(os.environ.get('PAPER_TRADING_ENABLED', 'false')).lower() == 'true' or
+        LIVE_TRADING_ENABLED
+    )
+    
+    if not trading_enabled:
         return
+    
+    trading_mode = 'Real Trading' if LIVE_TRADING_ENABLED else 'Paper Trading'
+    print(f"Monitor job: {trading_mode} mode")
 
     try:
         # Fetch only NBA, NFL, NHL data (not all-sports)
@@ -1687,8 +1739,10 @@ def monitor_job():
                 print(f"✅ Executed Paper Trade: {trade['game']} (+${trade['profit']:.2f})")
                 
                 # Send Push Notification
-                title = f"💰 New Arb: {trade['game']}"
+                mode_indicator = "🔴 LIVE" if LIVE_TRADING_ENABLED else "📄 PAPER"
+                title = f"{mode_indicator} 💰 New Arb: {trade['game']}"
                 content = (
+                    f"<b>Mode:</b> {'Real Trading' if LIVE_TRADING_ENABLED else 'Paper Trading'}<br>"
                     f"<b>Sport:</b> {trade['sport']}<br>"
                     f"<b>Type:</b> {trade.get('arb_type', 'unknown')}<br>"
                     f"<b>Profit:</b> ${trade['profit']:.2f}<br>"
@@ -1718,7 +1772,7 @@ def monitor_job():
 # Start Scheduler
 if not scheduler.running:
     scheduler.add_job(func=monitor_job, trigger="interval", seconds=30)
-    scheduler.add_job(func=check_paper_trading_settlements, trigger="interval", minutes=1)
+    scheduler.add_job(func=check_trading_settlements, trigger="interval", minutes=1)
     scheduler.start()
     atexit.register(lambda: scheduler.shutdown())
 

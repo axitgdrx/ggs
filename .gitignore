@@ -11,3 +11,8 @@ venv/
 .venv/
 node_modules/
 .DS_Store
+
+# Trading data files (persistent but user-specific)
+paper_trading_data.json
+real_trading_data.json
+*.pid
