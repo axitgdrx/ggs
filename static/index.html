@@ -195,7 +195,6 @@
         .sport-chip.nba { color: #f97316; }
         .sport-chip.nfl { color: #10b981; }
         .sport-chip.nhl { color: #38bdf8; }
-        .sport-chip.football { color: #22c55e; }
 
         /* Multi-Platform Comparison Table */
         .comparison-table {
@@ -563,7 +562,6 @@
                 <button class="sport-tab" data-sport="nba">NBA</button>
                 <button class="sport-tab" data-sport="nfl">NFL</button>
                 <button class="sport-tab" data-sport="nhl">NHL</button>
-                <button class="sport-tab" data-sport="football">足球</button>
             </div>
 
             <div class="betting-controls" style="margin-top: 20px; background: rgba(255, 255, 255, 0.05); padding: 15px; border-radius: 12px; display: flex; align-items: center; gap: 15px;">
@@ -921,8 +919,6 @@ function createGameCard(game) {
                     url = '/api/odds/nfl';
                 } else if (currentSport === 'nhl') {
                     url = '/api/odds/nhl';
-                } else if (currentSport === 'football') {
-                    url = '/api/odds/football';
                 }
 
                 const response = await fetch(url);

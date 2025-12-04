@@ -17,9 +17,6 @@ from nfl_team_mapping import NFL_TEAM_LOGOS
 from nhl_polymarket_api import NHLPolymarketAPI
 from nhl_kalshi_api import NHLKalshiAPI
 from nhl_team_mapping import NHL_TEAM_LOGOS
-from football_polymarket_api import FootballPolymarketAPI
-from football_kalshi_api import FootballKalshiAPI
-from football_team_mapping import FOOTBALL_TEAM_LOGOS
 from crypto_polymarket_api import CryptoPolymarketAPI
 from crypto_kalshi_api import CryptoKalshiAPI
 from odds_api_aggregator import OddsAPIAggregator
@@ -71,12 +68,6 @@ nhl_cache = {
     'cache_duration': 30
 }
 
-football_cache = {
-    'data': None,
-    'timestamp': None,
-    'cache_duration': 30
-}
-
 
 # Historical data storage (keep last 60 data points = 30 minutes at 30s intervals)
 nba_game_history = defaultdict(lambda: {
@@ -94,13 +85,6 @@ nfl_game_history = defaultdict(lambda: {
 })
 
 nhl_game_history = defaultdict(lambda: {
-    'diff_history': deque(maxlen=60),
-    'poly_history': deque(maxlen=60),
-    'kalshi_history': deque(maxlen=60),
-    'timestamps': deque(maxlen=60)
-})
-
-football_game_history = defaultdict(lambda: {
     'diff_history': deque(maxlen=60),
     'poly_history': deque(maxlen=60),
     'kalshi_history': deque(maxlen=60),
@@ -142,16 +126,6 @@ def _calculate_risk_free_details(poly_game, kalshi_game):
     """
     poly_away = _extract_price_value(poly_game, 'away')
     poly_home = _extract_price_value(poly_game, 'home')
-
-    # Fix for Soccer 3-way markets:
-    # Soccer markets usually include a Draw option (Home/Away/Draw).
-    # The current binary arbitrage logic (Strategy 1: Poly Away + Kalshi Home) assumes only two outcomes.
-    # This leads to false positives because it ignores the Draw probability.
-    # Until we implement 3-way arbitrage logic (checking Poly Draw + Kalshi Draw), 
-    # we must disable arbitrage detection for Soccer to prevent users from losing money.
-    sport = poly_game.get('sport') or kalshi_game.get('sport')
-    if sport == 'SOCCER':
-        return None
 
     kalshi_away = _extract_price_value(kalshi_game, 'away')
     kalshi_home = _extract_price_value(kalshi_game, 'home')
@@ -699,20 +673,6 @@ def fetch_all_sports_data(force_refresh=False):
             priority_kalshi.extend(nhl_kalshi)
         except Exception as e:
             print(f"NHL Kalshi fetch error: {e}")
-        try:
-            football_poly_api = FootballPolymarketAPI()
-            football_poly = football_poly_api.get_football_games()
-            _update_sport(football_poly, 'SOCCER')
-            priority_poly.extend(football_poly)
-        except Exception as e:
-            print(f"Football Polymarket fetch error: {e}")
-        try:
-            football_kalshi_api = FootballKalshiAPI()
-            football_kalshi = football_kalshi_api.get_football_games()
-            _update_sport(football_kalshi, 'SOCCER')
-            priority_kalshi.extend(football_kalshi)
-        except Exception as e:
-            print(f"Football Kalshi fetch error: {e}")
         return priority_poly, priority_kalshi
     
     def _build_games_from_kalshi_markets(markets):
@@ -1338,55 +1298,6 @@ def get_nhl_odds():
         }), 500
 
 
-def _build_football_payload(now):
-    poly_api = FootballPolymarketAPI()
-    kalshi_api = FootballKalshiAPI()
-
-    poly_games = poly_api.get_football_games()
-    kalshi_games = kalshi_api.get_football_games()
-
-    matched = match_games(poly_games, kalshi_games)
-    comparisons = calculate_comparisons(matched, FOOTBALL_TEAM_LOGOS, football_game_history)
-
-    return {
-        'success': True,
-        'sport': 'football',
-        'timestamp': now.isoformat(),
-        'stats': {
-            'total_games': len(comparisons),
-            'poly_total': len(poly_games),
-            'kalshi_total': len(kalshi_games),
-            'matched': len(matched)
-        },
-        'games': comparisons
-    }
-
-
-def fetch_football_data(force_refresh=False):
-    now = datetime.now()
-    cached = _get_cached_data(football_cache, now, force_refresh)
-    if cached:
-        return cached
-    result = _build_football_payload(now)
-    _set_cache_data(football_cache, result, now)
-    return result
-
-
-@app.route('/api/odds/football')
-def get_football_odds():
-    """Get Football odds comparison data"""
-    try:
-        data = fetch_football_data()
-        return jsonify(data)
-    except Exception as e:
-        now = datetime.now()
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'timestamp': now.isoformat()
-        }), 500
-
-
 @app.route('/api/odds/all-sports')
 def get_all_sports_odds():
     """Get comprehensive odds data from all sports categories"""
@@ -1429,13 +1340,11 @@ def get_multi_sport_odds():
         nba_data = fetch_nba_data()
         nfl_data = fetch_nfl_data()
         nhl_data = fetch_nhl_data()
-        football_data = fetch_football_data()
 
         sport_payloads = {
             'nba': nba_data,
             'nfl': nfl_data,
             'nhl': nhl_data,
-            'football': football_data,
         }
 
         combined_games = []
@@ -1672,7 +1581,6 @@ def monitor_job():
             nba = fetch_nba_data()
             nfl = fetch_nfl_data()
             nhl = fetch_nhl_data()
-            football = fetch_football_data()
             
             all_games = []
             
@@ -1695,7 +1603,6 @@ def monitor_job():
             all_games.extend(extract_games(nba, 'nba'))
             all_games.extend(extract_games(nfl, 'nfl'))
             all_games.extend(extract_games(nhl, 'nhl'))
-            all_games.extend(extract_games(football, 'football'))
         else:
             # Use the comprehensive data - prioritize homepage_games for consistency with frontend
             all_games = []
