@@ -109,26 +109,9 @@ class FootballKalshiAPI(KalshiAPI):
                     home_raw = game_data['home_raw']
                     total = away_raw + home_raw
 
-                    if total > 0:
-                        away_pct = (away_raw / total) * 100
-                        home_pct = (home_raw / total) * 100
-
-                        away_floor = math.floor(away_pct)
-                        home_floor = math.floor(home_pct)
-                        remainder = 100 - (away_floor + home_floor)
-
-                        if away_raw <= home_raw:
-                            away_prob = away_floor + remainder
-                            home_prob = home_floor
-                        else:
-                            away_prob = away_floor
-                            home_prob = home_floor + remainder
-                    else:
-                        away_prob = 0
-                        home_prob = 0
-
-                    game_data['away_prob'] = away_prob
-                    game_data['home_prob'] = home_prob
+                    # Do not normalize for Soccer (3-way market)
+                    game_data['away_prob'] = away_raw
+                    game_data['home_prob'] = home_raw
 
                     # Prefer non-tie ticker for the main URL
                     main_ticker = game_data.get('away_ticker') or game_data.get('home_ticker') or game_data.get('ticker', '')
