@@ -330,7 +330,20 @@ class RealTradingSystem:
             try:
                 with open(REAL_TRADING_DATA_FILE, 'r') as f:
                     self.data = json.load(f)
-            except:
+                
+                # Migrate old data format if needed
+                today = datetime.now().date().isoformat()
+                if 'last_daily_reset_date' not in self.data:
+                    self.data['last_daily_reset_date'] = today
+                if 'daily_loss' not in self.data:
+                    self.data['daily_loss'] = 0.0
+                if 'daily_trades' not in self.data:
+                    self.data['daily_trades'] = []
+                if 'errors' not in self.data:
+                    self.data['errors'] = []
+                    
+            except Exception as e:
+                print(f"Error loading trading data: {e}. Resetting...")
                 self.reset_data()
         else:
             self.reset_data()
@@ -342,6 +355,8 @@ class RealTradingSystem:
         except:
             initial_balance = 10000.0
         
+        today = datetime.now().date().isoformat()
+        
         self.data = {
             'balance': initial_balance,
             'initial_balance': initial_balance,
@@ -349,6 +364,7 @@ class RealTradingSystem:
             'total_profit': 0.0,
             'daily_trades': [],
             'daily_loss': 0.0,
+            'last_daily_reset_date': today,
             'errors': []
         }
         self.save_data()
@@ -381,8 +397,17 @@ class RealTradingSystem:
     def _check_risk_controls(self, total_cost: float) -> Tuple[bool, str]:
         """Check if trade violates risk controls"""
         
-        # Check daily trade limit
         today = datetime.now().date().isoformat()
+        
+        # Reset daily metrics if date changed (daily reset at UTC midnight)
+        last_reset_date = self.data.get('last_daily_reset_date')
+        if last_reset_date != today:
+            self.data['daily_loss'] = 0.0
+            self.data['daily_trades'] = []
+            self.data['last_daily_reset_date'] = today
+            # Don't save here; let caller decide
+        
+        # Check daily trade limit
         daily_trades = [t for t in self.data.get('daily_trades', []) 
                        if t.get('date') == today]
         if len(daily_trades) >= self.max_daily_trades:
@@ -393,12 +418,13 @@ class RealTradingSystem:
             return False, f"Position size ({total_cost:.2f}) exceeds limit (${self.max_position_size:.2f})"
         
         # Check daily loss limit
-        if self.data.get('daily_loss', 0.0) >= self.daily_loss_limit:
-            return False, f"Daily loss limit reached (${self.daily_loss_limit:.2f})"
+        current_daily_loss = self.data.get('daily_loss', 0.0)
+        if current_daily_loss >= self.daily_loss_limit:
+            return False, f"Daily loss limit reached (${self.daily_loss_limit:.2f}), current: ${current_daily_loss:.2f}"
         
         # Check balance
         if total_cost > self.data['balance']:
-            return False, "Insufficient balance"
+            return False, f"Insufficient balance: ${self.data['balance']:.2f} < ${total_cost:.2f}"
         
         return True, "OK"
     
@@ -442,11 +468,6 @@ class RealTradingSystem:
         Reuses paper trading logic but makes actual API calls
         """
         
-        # Check risk controls first
-        risk_ok, risk_msg = self._check_risk_controls(amount_per_leg * 2)  # Rough estimate for 2 legs
-        if not risk_ok:
-            return False, risk_msg
-        
         # Same arbitrage detection logic as PaperTradingSystem
         risk_detail = self._normalize_risk_details(game.get('riskFreeArb') or game.get('risk_free_arb'))
         required_keys = ['bestAwayPrice', 'bestHomePrice', 'bestAwayEffective', 'bestHomeEffective', 'totalCost', 'edge']
@@ -483,6 +504,11 @@ class RealTradingSystem:
             if roi_percent <= min_roi:
                 return False, f"ROI ({roi_percent:.2f}%) below threshold ({min_roi}%)"
             
+            # Check risk controls AFTER computing actual cost (not just estimate)
+            risk_ok, risk_msg = self._check_risk_controls(total_cost_usd)
+            if not risk_ok:
+                return False, risk_msg
+            
             game_id = f"{game.get('away_code')}@{game.get('home_code')}"
             
             # Check for duplicate trades
@@ -497,13 +523,32 @@ class RealTradingSystem:
             if away_platform == home_platform:
                 return False, "Invalid arbitrage: both legs on same platform"
             
+            # Extract market IDs with fallback options
+            away_market_id = None
+            if away_platform == 'Polymarket':
+                away_market_id = poly.get('away_market_id') or poly.get('market_id')
+            else:  # Kalshi
+                away_market_id = kalshi.get('away_ticker') or kalshi.get('away_market_id')
+            
+            home_market_id = None
+            if home_platform == 'Polymarket':
+                home_market_id = poly.get('home_market_id') or poly.get('market_id')
+            else:  # Kalshi
+                home_market_id = kalshi.get('home_ticker') or kalshi.get('home_market_id')
+            
+            # Validate market IDs
+            if not away_market_id:
+                return False, f"Missing market ID for {away_platform} (away leg)"
+            if not home_market_id:
+                return False, f"Missing market ID for {home_platform} (home leg)"
+            
             best_away = {
                 'platform': away_platform,
                 'price': risk_detail['bestAwayPrice'],
                 'eff': risk_detail['bestAwayEffective'],
                 'team': game.get('away_team', 'Away'),
                 'code': game.get('away_code'),
-                'market_id': poly.get('away_market_id') or poly.get('market_id') if away_platform == 'Polymarket' else kalshi.get('away_ticker'),
+                'market_id': away_market_id,
                 'url': poly.get('url', '') if away_platform == 'Polymarket' else kalshi.get('url', ''),
             }
             
@@ -513,9 +558,17 @@ class RealTradingSystem:
                 'eff': risk_detail['bestHomeEffective'],
                 'team': game.get('home_team', 'Home'),
                 'code': game.get('home_code'),
-                'market_id': poly.get('home_market_id') or poly.get('market_id') if home_platform == 'Polymarket' else kalshi.get('home_ticker'),
+                'market_id': home_market_id,
                 'url': poly.get('url', '') if home_platform == 'Polymarket' else kalshi.get('url', ''),
             }
+            
+            # Validate order parameters
+            if quantity <= 0:
+                return False, f"Invalid quantity: {quantity} (must be > 0)"
+            if not (0 < best_away['price'] < 1):
+                return False, f"Invalid away price: {best_away['price']} (must be between 0 and 1)"
+            if not (0 < best_home['price'] < 1):
+                return False, f"Invalid home price: {best_home['price']} (must be between 0 and 1)"
             
             # Execute orders on both platforms
             trade = {
@@ -542,23 +595,33 @@ class RealTradingSystem:
             # Place home leg
             home_success = self._place_leg_order(best_home, quantity, trade)
             if not home_success:
-                # Try to cancel away leg
+                # Try to cancel away leg (important for atomicity)
                 self._cancel_leg_order(best_away, trade)
-                return False, "Failed to place home leg order"
+                return False, "Failed to place home leg order (away leg cancelled)"
             
-            # Record trade
-            self.data['bets'].append(trade)
-            self.data['balance'] -= total_cost_usd
-            
-            today = datetime.now().date().isoformat()
-            self.data['daily_trades'].append({
-                'date': today,
-                'id': game_id,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-            self.save_data()
-            return True, trade
+            # Record trade with error handling
+            try:
+                self.data['bets'].append(trade)
+                self.data['balance'] -= total_cost_usd
+                
+                today = datetime.now().date().isoformat()
+                self.data['daily_trades'].append({
+                    'date': today,
+                    'id': game_id,
+                    'timestamp': datetime.now().isoformat()
+                })
+                
+                self.save_data()
+                return True, trade
+            except Exception as e:
+                # Rollback: remove trade if save fails
+                if self.data['bets'] and self.data['bets'][-1]['id'] == game_id:
+                    self.data['bets'].pop()
+                    self.data['balance'] += total_cost_usd
+                
+                error_msg = f"Failed to save trade: {str(e)}"
+                self._record_error(game_id, error_msg)
+                return False, error_msg
         
         return False, "No risk-free arbitrage opportunity"
     
@@ -684,6 +747,7 @@ class RealTradingSystem:
                         total_payout += bet['quantity'] * 1.0
                 
                 if all_legs_resolved and resolved_legs_count == len(bet['legs']):
+                    # All legs resolved - settle the trade
                     bet['status'] = 'settled'
                     bet['settled_amount'] = total_payout
                     bet['realized_profit'] = total_payout - bet['cost']
@@ -697,6 +761,24 @@ class RealTradingSystem:
                     
                     changed = True
                     print(f"Real Trade Settled: {bet['id']}. Payout: {total_payout}. Profit: {bet['realized_profit']}")
+                
+                elif not all_legs_resolved and resolved_legs_count > 0:
+                    # Some legs resolved but not all - check timeout (24 hours)
+                    trade_age = datetime.now() - datetime.fromisoformat(bet['timestamp'])
+                    if trade_age.total_seconds() > 86400:  # 24 hours
+                        bet['status'] = 'incomplete'
+                        bet['settled_amount'] = total_payout
+                        bet['realized_profit'] = total_payout - bet['cost']
+                        bet['profit'] = bet['realized_profit']
+                        
+                        self.data['balance'] += total_payout
+                        
+                        # Track any loss
+                        if bet['realized_profit'] < 0:
+                            self.data['daily_loss'] += abs(bet['realized_profit'])
+                        
+                        changed = True
+                        print(f"Real Trade Marked Incomplete (timeout): {bet['id']}. Partial payout: {total_payout}. Profit: {bet['realized_profit']}")
         
         if changed:
             self.save_data()
