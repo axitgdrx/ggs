@@ -78,11 +78,20 @@ def test_real_trading():
     # Test clients
     pm_client = PolymarketTradingClient()
     print(f"✅ PolymarketTradingClient created")
+    print(f"   Auth mode: {pm_client.auth_mode}")
     print(f"   API Key configured: {'Yes' if pm_client.api_key else 'No'}")
+    if pm_client.api_key_source == 'derived':
+        print("   API key derived from wallet signature")
+    if pm_client.clob_credentials:
+        print("   CLOB credentials available")
     
     kalshi_client = KalshiTradingClient()
     print(f"✅ KalshiTradingClient created")
-    print(f"   API Key configured: {'Yes' if kalshi_client.api_key else 'No'}")
+    print(f"   Auth mode: {kalshi_client.auth_mode}")
+    if kalshi_client.auth_mode != 'rsa':
+        print(f"   API Key configured: {'Yes' if kalshi_client.api_key else 'No'}")
+    else:
+        print("   RSA credentials loaded")
     
     # Test risk controls
     ok, msg = rts._check_risk_controls(100)

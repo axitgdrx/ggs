@@ -4,14 +4,183 @@ Executes live trades on Kalshi and Polymarket platforms
 Includes comprehensive risk controls and error handling
 """
 
+import base64
 import json
 import os
+import time
+import hmac
+import hashlib
 from datetime import datetime, timedelta
 from collections import defaultdict
+
 import requests
-from typing import Dict, Tuple, Optional, List
+from typing import Dict, Tuple, Optional, List, Any
+
+from eth_account import Account
+from eth_account.messages import encode_structured_data
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding
 
 REAL_TRADING_DATA_FILE = 'real_trading_data.json'
+
+
+class PolymarketClobAuthenticator:
+    """Handles Polymarket CLOB authentication via wallet signatures."""
+
+    DOMAIN_NAME = "ClobAuthDomain"
+    DOMAIN_VERSION = "1"
+    MESSAGE = "This message attests that I control the given wallet"
+
+    def __init__(self, private_key: str, chain_id: int = 137,
+                 base_url: str = "https://clob.polymarket.com",
+                 session: Optional[requests.Session] = None):
+        if not private_key:
+            raise ValueError("Polymarket private key is required for CLOB authentication")
+        self.private_key = self._normalize_private_key(private_key)
+        self.chain_id = chain_id
+        self.base_url = base_url.rstrip("/")
+        self.session = session or requests.Session()
+        self.account = Account.from_key(self.private_key)
+        self.creds: Optional[Dict[str, str]] = None
+
+    def _normalize_private_key(self, key: str) -> str:
+        key = key.strip()
+        if not key:
+            raise ValueError("Empty private key provided")
+        if not key.startswith("0x"):
+            key = f"0x{key}"
+        return key
+
+    def _build_structured_data(self, timestamp: int, nonce: int) -> Dict[str, Any]:
+        return {
+            "types": {
+                "EIP712Domain": [
+                    {"name": "name", "type": "string"},
+                    {"name": "version", "type": "string"},
+                    {"name": "chainId", "type": "uint256"},
+                ],
+                "ClobAuth": [
+                    {"name": "address", "type": "address"},
+                    {"name": "timestamp", "type": "string"},
+                    {"name": "nonce", "type": "uint256"},
+                    {"name": "message", "type": "string"},
+                ],
+            },
+            "domain": {
+                "name": self.DOMAIN_NAME,
+                "version": self.DOMAIN_VERSION,
+                "chainId": self.chain_id,
+            },
+            "primaryType": "ClobAuth",
+            "message": {
+                "address": self.account.address,
+                "timestamp": str(timestamp),
+                "nonce": int(nonce),
+                "message": self.MESSAGE,
+            },
+        }
+
+    def _sign_auth_payload(self, timestamp: int, nonce: int) -> str:
+        structured = self._build_structured_data(timestamp, nonce)
+        signable = encode_structured_data(structured)
+        signed = Account.sign_message(signable, self.private_key)
+        return signed.signature.hex()
+
+    def _build_l1_headers(self, nonce: int = 0, timestamp: Optional[int] = None) -> Dict[str, str]:
+        ts = int(timestamp or time.time())
+        signature = self._sign_auth_payload(ts, nonce)
+        return {
+            'POLY_ADDRESS': self.account.address,
+            'POLY_SIGNATURE': signature,
+            'POLY_TIMESTAMP': str(ts),
+            'POLY_NONCE': str(nonce),
+        }
+
+    def _format_body(self, body: Any) -> Optional[str]:
+        if body is None:
+            return None
+        if isinstance(body, str):
+            return body
+        return json.dumps(body, separators=(',', ':'), ensure_ascii=False)
+
+    def _build_l2_headers(self, method: str, endpoint: str, body: Any = None,
+                          timestamp: Optional[int] = None) -> Dict[str, str]:
+        creds = self.ensure_credentials()
+        ts = int(timestamp or time.time())
+        body_str = self._format_body(body)
+        message = f"{ts}{method.upper()}{endpoint}"
+        if body_str:
+            message += body_str
+        secret = base64.b64decode(creds['secret'])
+        digest = hmac.new(secret, message.encode('utf-8'), hashlib.sha256).digest()
+        signature = base64.b64encode(digest).decode('utf-8').replace('+', '-').replace('/', '_')
+        return {
+            'POLY_ADDRESS': self.account.address,
+            'POLY_SIGNATURE': signature,
+            'POLY_TIMESTAMP': str(ts),
+            'POLY_API_KEY': creds['key'],
+            'POLY_PASSPHRASE': creds['passphrase'],
+        }
+
+    def _handle_api_response(self, response: requests.Response) -> Dict[str, str]:
+        response.raise_for_status()
+        data = response.json()
+        if {'apiKey', 'secret', 'passphrase'}.issubset(data.keys()):
+            creds = {
+                'key': data['apiKey'],
+                'secret': data['secret'],
+                'passphrase': data['passphrase'],
+            }
+            self.creds = creds
+            return creds
+        return data
+
+    def create_api_key(self) -> Dict[str, str]:
+        endpoint = f"{self.base_url}/auth/api-key"
+        headers = self._build_l1_headers()
+        response = self.session.post(endpoint, headers=headers, timeout=10)
+        return self._handle_api_response(response)
+
+    def derive_api_key(self) -> Dict[str, str]:
+        endpoint = f"{self.base_url}/auth/derive-api-key"
+        headers = self._build_l1_headers()
+        response = self.session.get(endpoint, headers=headers, timeout=10)
+        return self._handle_api_response(response)
+
+    def ensure_credentials(self) -> Dict[str, str]:
+        if self.creds:
+            return self.creds
+        try:
+            creds = self.create_api_key()
+        except Exception:
+            creds = None
+        if not isinstance(creds, dict) or 'key' not in creds:
+            creds = self.derive_api_key()
+        if not isinstance(creds, dict) or 'key' not in creds:
+            raise RuntimeError('Unable to obtain Polymarket API credentials')
+        self.creds = creds
+        return creds
+
+    def request(self, method: str, endpoint: str, payload: Any = None,
+                params: Optional[Dict[str, Any]] = None, timeout: int = 10) -> Any:
+        if not endpoint.startswith('/'):
+            endpoint = f'/{endpoint}'
+        method = method.upper()
+        headers = self._build_l2_headers(method, endpoint, payload)
+        url = f"{self.base_url}{endpoint}"
+        try:
+            response = self.session.request(method, url, headers=headers, json=payload,
+                                            params=params, timeout=timeout)
+            response.raise_for_status()
+            if response.content:
+                return response.json()
+            return {}
+        except requests.RequestException as exc:
+            error_text = exc.response.text if exc.response is not None else str(exc)
+            raise RuntimeError(f"Polymarket CLOB request failed: {error_text}") from exc
+
+    def get_credentials(self) -> Optional[Dict[str, str]]:
+        return self.creds
 
 
 class PolymarketTradingClient:
@@ -20,18 +189,60 @@ class PolymarketTradingClient:
     BASE_URL = "https://gamma-api.polymarket.com"
     
     def __init__(self, api_key: str = None, private_key: str = None):
-        """
-        Initialize Polymarket trading client
-        Polymarket uses API key + private key for authentication
-        """
-        self.api_key = api_key or os.environ.get('POLYMARKET_API_KEY')
-        self.private_key = private_key or os.environ.get('POLYMARKET_PRIVATE_KEY')
+        """Initialize Polymarket trading client."""
         self.session = requests.Session()
         self.session.timeout = 10
-        self.session.headers.update({
-            'User-Agent': 'PolyMix-RealTrader/1.0'
-        })
-        
+        self.session.headers.update({'User-Agent': 'PolyMix-RealTrader/1.0'})
+        self.api_key = api_key or os.environ.get('POLYMARKET_API_KEY')
+        self.api_key_source = 'env' if self.api_key else None
+        raw_private_key = private_key or os.environ.get('POLYMARKET_PRIVATE_KEY')
+        self.clob_auth: Optional[PolymarketClobAuthenticator] = None
+        self.clob_credentials: Optional[Dict[str, str]] = None
+        self.auth_mode = 'api-key' if self.api_key else 'unconfigured'
+
+        if raw_private_key:
+            try:
+                chain_id = int(os.environ.get('POLYMARKET_CHAIN_ID', 137))
+            except Exception:
+                chain_id = 137
+            clob_base = os.environ.get('POLYMARKET_CLOB_URL', 'https://clob.polymarket.com')
+            try:
+                self.clob_auth = PolymarketClobAuthenticator(
+                    raw_private_key,
+                    chain_id=chain_id,
+                    base_url=clob_base,
+                    session=self.session,
+                )
+                self.clob_credentials = self.clob_auth.ensure_credentials()
+                if not self.api_key and self.clob_credentials:
+                    self.api_key = self.clob_credentials.get('key')
+                    self.api_key_source = 'derived'
+                self.auth_mode = 'clob'
+            except Exception as exc:
+                print(f"Failed to initialize Polymarket CLOB authentication: {exc}")
+
+    def clob_request(self, method: str, endpoint: str, payload: Any = None,
+                     params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Execute a signed request against the Polymarket CLOB API."""
+        if not self.clob_auth:
+            return {'success': False, 'error': 'Polymarket CLOB authentication is not configured'}
+        try:
+            data = self.clob_auth.request(method, endpoint, payload=payload, params=params)
+            return {'success': True, 'data': data}
+        except Exception as exc:
+            return {'success': False, 'error': str(exc)}
+
+    def get_clob_credentials(self) -> Optional[Dict[str, str]]:
+        if self.clob_credentials:
+            return self.clob_credentials
+        if not self.clob_auth:
+            return None
+        try:
+            self.clob_credentials = self.clob_auth.ensure_credentials()
+            return self.clob_credentials
+        except Exception:
+            return None
+
     def place_order(self, market_id: str, side: str, amount: float, price: float) -> Dict:
         """
         Place an order on Polymarket
@@ -156,145 +367,136 @@ class PolymarketTradingClient:
 
 
 class KalshiTradingClient:
-    """Client for executing orders on Kalshi"""
-    
-    BASE_URL = "https://api.elections.kalshi.com/trade-api/v2"
-    
-    def __init__(self, api_key: str = None, secret: str = None):
-        """
-        Initialize Kalshi trading client
-        Kalshi uses API key + secret for authentication
-        """
-        self.api_key = api_key or os.environ.get('KALSHI_API_KEY')
-        self.secret = secret or os.environ.get('KALSHI_SECRET')
+    """Client for executing orders on Kalshi."""
+
+    BASE_URL = "https://api.kalshi.com/trade-api/v2"
+    SIGNING_PREFIX = "/trade-api/v2"
+
+    def __init__(self, api_key: str = None, secret: str = None,
+                 api_key_id: str = None, private_key: str = None,
+                 private_key_path: str = None):
         self.session = requests.Session()
         self.session.timeout = 10
-        self.session.headers.update({
-            'User-Agent': 'PolyMix-RealTrader/1.0'
-        })
-        
-    def place_order(self, ticker: str, side: str, amount: float, price: float, 
-                    order_type: str = 'limit') -> Dict:
-        """
-        Place an order on Kalshi
-        
-        Args:
-            ticker: Market ticker on Kalshi
-            side: 'Yes' or 'No'
-            amount: Amount to stake (in cents or units)
-            price: Price to place order at
-            order_type: 'limit' or 'market'
-            
-        Returns:
-            Dict with order_id, status, and other details
-        """
-        try:
-            if not self.api_key:
-                return {
-                    'success': False,
-                    'error': 'KALSHI_API_KEY not configured',
-                    'order_id': None
-                }
-            
-            # Create order payload
-            payload = {
-                'ticker': ticker,
-                'side': side,  # 'Yes' or 'No'
-                'count': int(amount),  # Kalshi uses count (shares)
-                'price': int(price * 100),  # Convert to cents
-                'type': order_type
-            }
-            
+        self.session.headers.update({'User-Agent': 'PolyMix-RealTrader/1.0'})
+        self.api_key = api_key or os.environ.get('KALSHI_API_KEY')
+        self.secret = secret or os.environ.get('KALSHI_SECRET')
+        self.api_key_id = api_key_id or os.environ.get('KALSHI_API_KEY_ID')
+        self.private_key_str = private_key or os.environ.get('KALSHI_PRIVATE_KEY')
+        self.private_key_path = private_key_path or os.environ.get('KALSHI_PRIVATE_KEY_PATH')
+        self._rsa_private_key = None
+        self.base_url = (os.environ.get('KALSHI_API_URL') or self.BASE_URL).rstrip('/')
+        self.auth_mode = 'api-key' if self.api_key else 'unconfigured'
+
+        if self.api_key_id and (self.private_key_str or self.private_key_path):
+            try:
+                self._rsa_private_key = self._load_private_key()
+                self.auth_mode = 'rsa'
+            except Exception as exc:
+                print(f"Failed to initialize Kalshi RSA authentication: {exc}")
+        elif self.api_key:
+            self.auth_mode = 'api-key'
+
+    def _load_private_key(self):
+        if self.private_key_str:
+            pem_data = self.private_key_str.replace('\\n', '\n').encode('utf-8')
+        elif self.private_key_path:
+            with open(self.private_key_path, 'rb') as key_file:
+                pem_data = key_file.read()
+        else:
+            raise ValueError('Kalshi private key is not configured')
+        return serialization.load_pem_private_key(pem_data, password=None)
+
+    def _signed_headers(self, method: str, endpoint: str) -> Dict[str, str]:
+        if not self._rsa_private_key or not self.api_key_id:
+            raise RuntimeError('Kalshi RSA credentials are not configured')
+        timestamp = str(int(time.time() * 1000))
+        payload = f"{timestamp}{method.upper()}{self.SIGNING_PREFIX}{endpoint}"
+        signature = self._rsa_private_key.sign(
+            payload.encode('utf-8'),
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256()
+        )
+        signature_b64 = base64.b64encode(signature).decode('utf-8')
+        return {
+            'KALSHI-ACCESS-KEY': self.api_key_id,
+            'KALSHI-ACCESS-TIMESTAMP': timestamp,
+            'KALSHI-ACCESS-SIGNATURE': signature_b64,
+            'Content-Type': 'application/json'
+        }
+
+    def _request(self, method: str, endpoint: str, params: Optional[Dict[str, Any]] = None,
+                 payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if not endpoint.startswith('/'):
+            endpoint = f'/{endpoint}'
+        url = f"{self.base_url}{endpoint}"
+        headers = None
+        if self.auth_mode == 'rsa' and self._rsa_private_key:
+            headers = self._signed_headers(method, endpoint)
+        elif self.api_key:
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json'
             }
-            
-            url = f"{self.BASE_URL}/orders"
-            response = self.session.post(url, json=payload, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json().get('order', {})
-            return {
-                'success': True,
-                'order_id': data.get('order_id'),
-                'status': data.get('status'),
-                'filled': data.get('filled_count', 0),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            return {
-                'success': False,
-                'error': str(e),
-                'order_id': None
-            }
-    
-    def cancel_order(self, order_id: str) -> Dict:
-        """Cancel an order on Kalshi"""
+        else:
+            return {'success': False, 'error': 'Kalshi credentials not configured'}
         try:
-            if not self.api_key:
-                return {'success': False, 'error': 'KALSHI_API_KEY not configured'}
-            
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            url = f"{self.BASE_URL}/orders/{order_id}"
-            
-            response = self.session.delete(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            return {
-                'success': True,
-                'cancelled_at': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
-    def get_order_status(self, order_id: str) -> Dict:
-        """Get status of an order"""
-        try:
-            if not self.api_key:
-                return {'success': False, 'error': 'KALSHI_API_KEY not configured'}
-            
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            url = f"{self.BASE_URL}/orders/{order_id}"
-            
-            response = self.session.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json().get('order', {})
-            return {
-                'success': True,
-                'status': data.get('status'),
-                'filled': data.get('filled_count', 0),
-                'remaining': data.get('count', 0) - data.get('filled_count', 0)
-            }
-            
-        except Exception as e:
-            return {'success': False, 'error': str(e)}
-    
+            response = self.session.request(method, url, headers=headers, params=params,
+                                            json=payload, timeout=10)
+            if response.status_code >= 400:
+                return {'success': False, 'error': response.text, 'status': response.status_code}
+            data = response.json() if response.content else {}
+            return {'success': True, 'data': data}
+        except Exception as exc:
+            return {'success': False, 'error': str(exc)}
+
+    def place_order(self, ticker: str, side: str, amount: float, price: float,
+                    order_type: str = 'limit') -> Dict[str, Any]:
+        payload = {
+            'ticker': ticker,
+            'side': side,
+            'count': int(amount),
+            'price': int(price * 100),
+            'type': order_type
+        }
+        result = self._request('POST', '/orders', payload=payload)
+        if not result.get('success'):
+            return {**result, 'order_id': None}
+        data = result['data'].get('order', {})
+        return {
+            'success': True,
+            'order_id': data.get('order_id'),
+            'status': data.get('status'),
+            'filled': data.get('filled_count', 0),
+            'timestamp': datetime.now().isoformat()
+        }
+
+    def cancel_order(self, order_id: str) -> Dict[str, Any]:
+        result = self._request('DELETE', f'/orders/{order_id}')
+        if not result.get('success'):
+            return result
+        return {'success': True, 'cancelled_at': datetime.now().isoformat()}
+
+    def get_order_status(self, order_id: str) -> Dict[str, Any]:
+        result = self._request('GET', f'/orders/{order_id}')
+        if not result.get('success'):
+            return result
+        data = result['data'].get('order', {})
+        return {
+            'success': True,
+            'status': data.get('status'),
+            'filled': data.get('filled_count', 0),
+            'remaining': data.get('count', 0) - data.get('filled_count', 0)
+        }
+
     def get_fills(self, ticker: str = None, limit: int = 100) -> List[Dict]:
-        """Get list of filled orders"""
-        try:
-            if not self.api_key:
-                return []
-            
-            headers = {'Authorization': f'Bearer {self.api_key}'}
-            url = f"{self.BASE_URL}/fills"
-            params = {'limit': limit}
-            
-            if ticker:
-                params['ticker'] = ticker
-            
-            response = self.session.get(url, headers=headers, params=params, timeout=10)
-            response.raise_for_status()
-            
-            fills = response.json().get('fills', [])
-            return fills
-            
-        except Exception as e:
-            print(f"Error fetching fills: {e}")
+        params: Dict[str, Any] = {'limit': limit}
+        if ticker:
+            params['ticker'] = ticker
+        result = self._request('GET', '/fills', params=params)
+        if not result.get('success'):
+            print(f"Error fetching fills: {result.get('error')}")
             return []
+        return result['data'].get('fills', [])
 
 
 class RealTradingSystem:

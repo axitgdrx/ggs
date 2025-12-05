@@ -59,10 +59,18 @@ LIVE_TRADING_MAX_DAILY_TRADES=10         # Max trades per day
 LIVE_TRADING_DAILY_LOSS_LIMIT=500        # Max loss per day (USD)
 
 # Platform API Keys (REQUIRED)
-POLYMARKET_API_KEY=your_polymarket_key
-POLYMARKET_PRIVATE_KEY=your_polymarket_private_key
-KALSHI_API_KEY=your_kalshi_key
-KALSHI_SECRET=your_kalshi_secret
+# Polymarket: either set POLYMARKET_API_KEY directly or provide a wallet private key to derive it automatically
+POLYMARKET_API_KEY=your_polymarket_api_key
+POLYMARKET_PRIVATE_KEY=your_polymarket_wallet_private_key
+POLYMARKET_CLOB_URL=https://clob.polymarket.com
+POLYMARKET_CHAIN_ID=137
+
+# Kalshi (RSA signed authentication)
+# Legacy API keys are still supported via KALSHI_API_KEY, but Kalshi now issues key pairs
+KALSHI_API_KEY=optional_legacy_key
+KALSHI_API_KEY_ID=your_kalshi_access_key_id
+KALSHI_PRIVATE_KEY_PATH=/absolute/path/to/kalshi_private_key.pem
+# (Or provide inline PEM text via KALSHI_PRIVATE_KEY)
 
 # Reset Protection
 LIVE_TRADING_RESET_KEY=your_secure_reset_key
@@ -73,14 +81,14 @@ LIVE_TRADING_RESET_KEY=your_secure_reset_key
 #### Polymarket
 1. Go to https://polymarket.com
 2. Go to Settings → API Keys
-3. Create new API key
-4. Copy `API Key` and `Private Key`
+3. Create new API key and copy the value into `POLYMARKET_API_KEY`
+4. (Recommended) Also copy the wallet private key that controls your trading wallet into `POLYMARKET_PRIVATE_KEY`. PolyMix will use this key to derive rotating CLOB credentials automatically, following the same authentication flow as the official Polymarket copy-trading bot.
 
 #### Kalshi
 1. Go to https://kalshi.com
-2. Go to Settings → API Keys
-3. Create new API key
-4. Copy `API Key` and `Secret`
+2. Go to Settings → API Keys (Trade API v2)
+3. Create a new access key. Kalshi will provide an `API Key ID` plus a downloadable RSA private key.
+4. Set `KALSHI_API_KEY_ID` to the key ID and point `KALSHI_PRIVATE_KEY_PATH` (or `KALSHI_PRIVATE_KEY`) to the PEM file. This enables the signed authentication flow used by kalshibot. Legacy `KALSHI_API_KEY` + `KALSHI_SECRET` remain supported for backward compatibility, but will eventually be deprecated.
 
 ### Step 3: Test Connection
 
